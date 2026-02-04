@@ -13,6 +13,8 @@ class JarvisConfig:
     model_provider: str = "openai" # or "google"
     api_key: Optional[str] = None
     dangerous_mode: bool = False # Allow running without confirmation (not recommended)
+    browser_use_api_key: Optional[str] = None
+    openrouter_api_key: Optional[str] = None
 
 class ConfigManager:
     def __init__(self):
@@ -41,6 +43,10 @@ class ConfigManager:
             config.model_provider = os.getenv("JARVIS_MODEL_PROVIDER")
         if os.getenv("JARVIS_DRY_RUN"):
             config.dry_run = os.getenv("JARVIS_DRY_RUN") == "1"
+        if os.getenv("BROWSER_USE_API_KEY"):
+            config.browser_use_api_key = os.getenv("BROWSER_USE_API_KEY")
+        if os.getenv("OPENROUTER_API_KEY"):
+            config.openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
             
         return config
 

@@ -32,8 +32,27 @@ A Linux assistant that lives in your terminal.
    ```
    Edit `.env` and add your Gemini API key:
    ```bash
-   # Open .env and set JARVIS_API_KEY
+# Open .env and set JARVIS_API_KEY
    ```
+
+## Make it Available Globally
+
+To run `jarvis` from any directory without activating the virtual environment every time, add an alias to your shell configuration (`~/.bashrc` or `~/.zshrc`).
+
+1.  **Get the absolute path** to the executable:
+    ```bash
+    readlink -f .venv/bin/jarvis
+    # Example output: /home/garvit1000/projects/linux-agent/.venv/bin/jarvis
+    ```
+
+2.  **Add the alias** (replace with your actual path):
+    ```bash
+    echo "alias jarvis='/home/garvit1000/projects/linux-agent/.venv/bin/jarvis'" >> ~/.zshrc
+    source ~/.zshrc
+    ```
+
+Now you can open any terminal and just type `jarvis`.
+
 
 ## Usage
 

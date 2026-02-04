@@ -6,10 +6,10 @@ This document outlines the planned features and expansion capabilities for the J
 Connect Jarvis to the Model Context Protocol (MCP) to expand its toolset beyond the local machine.
 
 - **MCP Client Architecture**: Implement a client within Jarvis to connect to local or remote MCP servers.
-- **Browser Use MCP**: Integrate with `browser-use` or Puppeteer-based MCP servers to allow Jarvis to:
-    - Browse documentation to answer questions.
-    - Test web applications (opening localhost, checking console errors).
-    - Scrape data for local processing.
+- **Browser Use (Local)**:
+    - Use the open-source `browser-use` library (not the SDK).
+    - **Live View**: Run with `headless=False` so the user can watch the browser.
+    - **Search**: "Find MrBeast on YouTube" opens a real Chrome window and clicks the links.
 - **Firecrawl MCP**: Use Firecrawl for converting websites into LLM-ready markdown, useful for "Reading documentation pages" commands.
 - **Filesystem MCP**: Expose specific sandboxed directories to the agent for safer file operations.
 

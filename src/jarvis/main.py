@@ -10,7 +10,8 @@ from .core.config_manager import ConfigManager
 from .core.system_detector import SystemDetector
 from .core.executor import CommandExecutor
 from .modules.package_manager import AppInstaller
-from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient
+from .modules.browser_manager import BrowserManager
+from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient
 from .ai.command_generator import CommandGenerator
 
 app = typer.Typer(
@@ -28,12 +29,25 @@ is_dry_run = config_mgr.config.dry_run or os.getenv("JARVIS_DRY_RUN") == "1"
 executor = CommandExecutor(dry_run=is_dry_run)
 app_installer = AppInstaller(executor, sys_detector)
 
+# Setup Browser Manager
 # Setup AI
 # For now, default to Mock unless API key is set
 api_key = config_mgr.config.api_key or os.getenv("JARVIS_API_KEY")
-if api_key:
+
+# Setup Browser Manager (Local)
+# It uses the same LLM key as the main agent
+browser_manager = None
+if api_key or config_mgr.config.openrouter_api_key:
+    browser_manager = BrowserManager(
+        api_key=api_key, 
+        openrouter_key=config_mgr.config.openrouter_api_key,
+        provider=config_mgr.config.model_provider
+    )
+if api_key or config_mgr.config.openrouter_api_key:
     if config_mgr.config.model_provider == "google":
          llm_client = GoogleGenAIClient(api_key=api_key)
+    elif config_mgr.config.model_provider == "openrouter":
+         llm_client = OpenRouterClient(api_key=config_mgr.config.openrouter_api_key)
     else:
          llm_client = OpenAIClient(api_key=api_key)
 else:
@@ -118,6 +132,47 @@ def info():
     info = sys_detector.get_info()
     console.print(f"OS: [bold]{info.os_name} {info.os_version}[/bold]")
     console.print(f"Package Manager: [bold]{info.package_manager.value}[/bold]")
+
+@app.command()
+def browse(
+    task: str,
+    cloud: bool = typer.Option(False, "--cloud", help="Run in cloud mode (headless).")
+):
+    """
+    Perform a browser-based task using AI.
+    Default: Local (Live View). Use --cloud for headless cloud execution.
+    """
+    if not browser_manager:
+        console.print("[bold red]Error:[/bold red] JARVIS_API_KEY is not set. Please add it to your .env file.")
+        return
+
+    mode = "Cloud (Headless)" if cloud else "Local (Live View)"
+    console.print(Panel(f"[bold blue]Browser Task:[/bold blue] {task}\n[bold yellow]Mode:[/bold yellow] {mode}", title="Browsing"))
+    
+    with console.status(f"[bold cyan]Agent is browsing ({mode})...[/bold cyan]"):
+        result = browser_manager.run_task(task, use_cloud=cloud)
+    
+    console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Browser Output"))
+
+@app.command()
+def search(query: str):
+    """
+    Quickly answer a question using Google Search (Save Tokens).
+    Example: jarvis search "best places to eat in Dubai"
+    """
+    if isinstance(llm_client, MockLLMClient):
+        console.print("[yellow]Mock Mode: Cannot search without API Key.[/yellow]")
+        return
+    
+    if not isinstance(llm_client, GoogleGenAIClient):
+        console.print("[red]Search is only supported with Google (Gemini) provider.[/red]")
+        return
+
+    console.print(Panel(f"[bold blue]Query:[/bold blue] {query}", title="Google Search"))
+    with console.status("[bold cyan]Searching google...[/bold cyan]"):
+        result = llm_client.search(query)
+    
+    console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Search Result"))
 
 if __name__ == "__main__":
     app()
