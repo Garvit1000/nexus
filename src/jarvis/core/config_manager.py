@@ -1,0 +1,55 @@
+import json
+import os
+from dataclasses import dataclass, asdict
+from pathlib import Path
+from typing import Optional
+
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "jarvis"
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+@dataclass
+class JarvisConfig:
+    dry_run: bool = False
+    model_provider: str = "openai" # or "google"
+    api_key: Optional[str] = None
+    dangerous_mode: bool = False # Allow running without confirmation (not recommended)
+
+class ConfigManager:
+    def __init__(self):
+        self.config_file = CONFIG_FILE
+        self._ensure_config_dir()
+        self.config = self._load_config()
+
+    def _ensure_config_dir(self):
+        if not self.config_file.parent.exists():
+            self.config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    def _load_config(self) -> JarvisConfig:
+        config = JarvisConfig()
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, "r") as f:
+                    data = json.load(f)
+                    config = JarvisConfig(**data)
+            except (json.JSONDecodeError, TypeError):
+                pass
+        
+        # Override with environment variables
+        if os.getenv("JARVIS_API_KEY"):
+            config.api_key = os.getenv("JARVIS_API_KEY")
+        if os.getenv("JARVIS_MODEL_PROVIDER"):
+            config.model_provider = os.getenv("JARVIS_MODEL_PROVIDER")
+        if os.getenv("JARVIS_DRY_RUN"):
+            config.dry_run = os.getenv("JARVIS_DRY_RUN") == "1"
+            
+        return config
+
+    def save_config(self):
+        with open(self.config_file, "w") as f:
+            json.dump(asdict(self.config), f, indent=4)
+
+    def update(self, **kwargs):
+        for key, value in kwargs.items():
+            if hasattr(self.config, key):
+                setattr(self.config, key, value)
+        self.save_config()
