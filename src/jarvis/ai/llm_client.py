@@ -3,11 +3,11 @@ from typing import Optional
 
 class LLMClient(ABC):
     @abstractmethod
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         pass
 
 class MockLLMClient(LLMClient):
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         return "echo 'This is a mock response because no API key is configured.'"
 
 class GoogleGenAIClient(LLMClient):
@@ -16,9 +16,9 @@ class GoogleGenAIClient(LLMClient):
         self.client = genai.Client(api_key=api_key)
         self.model = model
 
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         response = self.client.models.generate_content(
-            model=self.model,
+            model=model or self.model,
             contents=prompt
         )
         return response.text
@@ -58,9 +58,9 @@ class OpenAIClient(LLMClient):
         self.client = OpenAI(api_key=api_key)
         self.model = model
 
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         response = self.client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,
             messages=[{"role": "user", "content": prompt}]
         )
         return response.choices[0].message.content or ""
@@ -74,11 +74,11 @@ class OpenRouterClient(LLMClient):
         )
         self.model = model
 
-    def generate_response(self, prompt: str) -> str:
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         # Support extra_body for reasoning if needed, but keeping it simple for now
         # akin to user example
         response = self.client.chat.completions.create(
-            model=self.model,
+            model=model or self.model,
             messages=[{"role": "user", "content": prompt}],
             # Enable reasoning/COT if the model supports it via extra_body
             # but user didn't strictly mandate it for every call, just showed example.

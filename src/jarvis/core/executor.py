@@ -12,7 +12,7 @@ class CommandExecutor:
         self.dry_run = dry_run
         self.require_confirmation = require_confirmation
 
-    def run(self, command: str, require_sudo: bool = False) -> Tuple[int, str, str]:
+    def run(self, command: str, require_sudo: bool = False, cwd: Optional[str] = None) -> Tuple[int, str, str]:
         """
         Executes a shell command.
         Returns: (return_code, stdout, stderr)
@@ -30,7 +30,7 @@ class CommandExecutor:
 
         # 3. Dry Run
         if self.dry_run:
-            console.print(f"[bold yellow][DRY RUN][/bold yellow] Would execute: [cyan]{command}[/cyan]")
+            console.print(f"[bold yellow][DRY RUN][/bold yellow] Would execute in {cwd or '.'}: [cyan]{command}[/cyan]")
             return 0, "Dry run", ""
 
         # 4. Confirmation
@@ -44,13 +44,14 @@ class CommandExecutor:
                 shlex.split(command),
                 capture_output=True,
                 text=True,
-                check=False
+                check=False,
+                cwd=cwd
             )
             return result.returncode, result.stdout, result.stderr
         except Exception as e:
             return -1, "", str(e)
 
-    def  run_interactive(self, command: str, require_sudo: bool = False) -> int:
+    def  run_interactive(self, command: str, require_sudo: bool = False, cwd: Optional[str] = None) -> int:
         """
         Runs a command allowing it to take over stdin/stdout/stderr. 
         Useful for interactive tools like vim, nano, or apt prompts.
@@ -69,7 +70,7 @@ class CommandExecutor:
 
         # 3. Dry Run
         if self.dry_run:
-            console.print(f"[bold yellow][DRY RUN][/bold yellow] Would execute interactively: [cyan]{command}[/cyan]")
+            console.print(f"[bold yellow][DRY RUN][/bold yellow] Would execute interactively in {cwd or '.'}: [cyan]{command}[/cyan]")
             return 0
 
         # 4. Confirmation
@@ -80,7 +81,7 @@ class CommandExecutor:
 
         try:
             console.print(f"[dim]Executing interactively: {command}[/dim]")
-            return subprocess.call(shlex.split(command))
+            return subprocess.call(shlex.split(command), cwd=cwd)
         except Exception as e:
             console.print(f"[red]Error:[/red] {e}")
             return -1
