@@ -30,27 +30,46 @@ class GoogleGenAIClient(LLMClient):
         from google import genai
         from google.genai import types
 
-        # Use gemini-2.0-flash for search grounding
-        model = "gemini-2.0-flash" 
+        # Try primary model (gemini-2.5-flash) then fallback to light model (gemini-1.5-flash)
+        models_to_try = ["gemini-2.5-flash", "gemini-1.5-flash"]
         
-        try:
-            response = self.client.models.generate_content(
-                model=model,
-                contents=query,
-                config=types.GenerateContentConfig(
-                    tools=[types.Tool(google_search=types.GoogleSearch())],
-                    response_modalities=["TEXT"],
+        last_error = None
+        for model in models_to_try:
+            try:
+                response = self.client.models.generate_content(
+                    model=model,
+                    contents=query,
+                    config=types.GenerateContentConfig(
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        response_modalities=["TEXT"],
+                    )
                 )
-            )
-            
-            # Format the output with citations if available
-            text = response.text
-            if response.candidates[0].grounding_metadata and response.candidates[0].grounding_metadata.search_entry_point:
-                 text += f"\n\nSource: {response.candidates[0].grounding_metadata.search_entry_point.rendered_content}"
-            
-            return text
-        except Exception as e:
-            return f"Search failed: {str(e)}"
+                
+                # Format the output with citations if available
+                # Format the output with citations if available
+                text = response.text
+                
+                # Try to extract clean links from grounding metadata
+                # rendered_content contains raw HTML/CSS which is not suitable for TUI
+                sources = []
+                if response.candidates[0].grounding_metadata:
+                    meta = response.candidates[0].grounding_metadata
+                    if meta.grounding_chunks:
+                        for chunk in meta.grounding_chunks:
+                            if chunk.web and chunk.web.uri:
+                                sources.append(chunk.web.uri)
+                                
+                if sources:
+                    # Deduplicate and format
+                    unique_sources = list(dict.fromkeys(sources))
+                    text += "\n\n**Sources:**\n" + "\n".join([f"- {s}" for s in unique_sources])
+                
+                return text
+            except Exception as e:
+                last_error = e
+                # Continue to next model
+                
+        return f"Search failed after retries: {str(last_error)}"
 
 class OpenAIClient(LLMClient):
     def __init__(self, api_key: str, model: str = "gpt-3.5-turbo"):

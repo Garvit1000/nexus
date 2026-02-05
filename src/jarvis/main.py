@@ -196,5 +196,34 @@ def video(prompt: str):
         
     console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Video Output"))
 
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    """
+    Jarvis: Your AI Linux Assistant.
+    """
+    if ctx.invoked_subcommand is None:
+        # Launch TUI
+        import asyncio
+        import sys
+        
+        # Ensure dependencies are passed
+        from .ui.console_app import JarvisApp
+        
+        # We need to ensure dependencies like video_manager are initialized
+        # existing code initialized them globally, which is fine.
+        
+        tui = JarvisApp(
+            llm_client=llm_client, 
+            video_manager=video_manager, 
+            browser_manager=browser_manager,
+            executor=executor
+        )
+        
+        try:
+            asyncio.run(tui.run_repl())
+        except KeyboardInterrupt:
+            console.print("[bold red]Goodbye![/bold red]")
+            sys.exit(0)
+
 if __name__ == "__main__":
     app()
