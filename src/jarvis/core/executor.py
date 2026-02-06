@@ -40,12 +40,18 @@ class CommandExecutor:
 
         try:
             console.print(f"[dim]Executing: {command}[/dim]")
+            
+            # Detect shell operators
+            use_shell = any(op in command for op in ["&&", "||", ";", "|", ">", "<"])
+            args = command if use_shell else shlex.split(command)
+            
             result = subprocess.run(
-                shlex.split(command),
+                args,
                 capture_output=True,
                 text=True,
                 check=False,
-                cwd=cwd
+                cwd=cwd,
+                shell=use_shell
             )
             return result.returncode, result.stdout, result.stderr
         except Exception as e:
@@ -81,7 +87,12 @@ class CommandExecutor:
 
         try:
             console.print(f"[dim]Executing interactively: {command}[/dim]")
-            return subprocess.call(shlex.split(command), cwd=cwd)
+            
+            # Detect shell operators
+            use_shell = any(op in command for op in ["&&", "||", ";", "|", ">", "<"])
+            args = command if use_shell else shlex.split(command)
+            
+            return subprocess.call(args, cwd=cwd, shell=use_shell)
         except Exception as e:
             console.print(f"[red]Error:[/red] {e}")
             return -1

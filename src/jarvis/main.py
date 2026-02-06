@@ -1,5 +1,6 @@
 import typer
 import os
+import sys
 from rich.console import Console
 from rich.panel import Panel
 from dotenv import load_dotenv
@@ -13,11 +14,15 @@ from .modules.package_manager import AppInstaller
 from .modules.browser_manager import BrowserManager
 from .modules.video_manager import VideoManager
 from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient
+from .modules.video_manager import VideoManager
+from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient, GroqClient
+from .ai.memory_client import SupermemoryClient
 from .ai.command_generator import CommandGenerator
+from .ui.onboarding import OnboardingUI
 
 app = typer.Typer(
-    name="jarvis",
-    help="Your Linux Assistant",
+    name="nexus",
+    help="Nexus: Your Intelligent Linux Assistant",
     add_completion=False,
 )
 console = Console()
@@ -30,29 +35,66 @@ is_dry_run = config_mgr.config.dry_run or os.getenv("JARVIS_DRY_RUN") == "1"
 executor = CommandExecutor(dry_run=is_dry_run)
 app_installer = AppInstaller(executor, sys_detector)
 
-# Setup Browser Manager
+# --- Onboarding Check (Before anything else) ---
+if not config_mgr.config.onboarding_completed:
+    # Check if we are in a subcommand or just running 'jarvis'
+    # For simplicity, if config says not onboarded, we run it.
+    # But we should only block if we are in interactive mode or main entry.
+    # However, since this is CLI specific logic, we might want to do it inside appropriate command 
+    # OR since app() is called at the end, we can do it here if we want global enforcement.
+    # Let's do it here:
+    onboarding = OnboardingUI(config_mgr, console)
+    onboarding.run()
+    # Reload config to get new keys
+    config_mgr = ConfigManager()
+
 # Setup AI
-# For now, default to Mock unless API key is set
-api_key = config_mgr.config.api_key or os.getenv("JARVIS_API_KEY")
+# Prioritize keys from config, then env vars
+api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY") 
+openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
+
 
 # Setup Browser Manager (Local)
-# It uses the same LLM key as the main agent
 browser_manager = None
-if api_key or config_mgr.config.openrouter_api_key:
+if openrouter_key: # Browser manager works best with OpenRouter/OpenAI 
     browser_manager = BrowserManager(
-        api_key=api_key, 
-        openrouter_key=config_mgr.config.openrouter_api_key,
-        provider=config_mgr.config.model_provider
+        api_key=api_key if api_key else "dummy", # It might use specific key
+        openrouter_key=openrouter_key,
     )
-if api_key or config_mgr.config.openrouter_api_key:
-    if config_mgr.config.model_provider == "google":
-         llm_client = GoogleGenAIClient(api_key=api_key)
-    elif config_mgr.config.model_provider == "openrouter":
-         llm_client = OpenRouterClient(api_key=config_mgr.config.openrouter_api_key)
-    else:
-         llm_client = OpenAIClient(api_key=api_key)
+if openrouter_key:
+     llm_client = OpenRouterClient(api_key=openrouter_key)
+elif api_key:
+     llm_client = GoogleGenAIClient(api_key=api_key)
 else:
-    llm_client = MockLLMClient()
+     llm_client = MockLLMClient()
+
+# Setup Groq Router (Limbic System)
+groq_key = config_mgr.config.groq_api_key or os.getenv("GROQ_API_KEY")
+router_client = None
+if groq_key:
+    try:
+        router_client = GroqClient(api_key=groq_key)
+        console.print("[dim green]⚡ Groq Brain Activated[/dim green]")
+    except Exception as e:
+        console.print(f"[dim red]Failed to init Groq: {e}[/dim red]")
+
+    from .ai.memory_client import SupermemoryClient
+    memory_client = SupermemoryClient(api_key=config_mgr.config.supermemory_api_key)
+    llm_client.set_memory_client(memory_client)
+    
+    # --- Brain Initialization: Persist System Context ---
+    # This ensures the agent "knows" what machine it is running on.
+    info = sys_detector.get_info()
+    sys_context = f"My System: OS={info.os_name} {info.os_version}, Package Manager={info.package_manager.value}"
+    
+    # Check if we already know this to avoid duplicate memories on restart
+    existing_memories = memory_client.query_memory(sys_context)
+    if sys_context not in existing_memories:
+        console.print(f"[dim]🧠 Memorizing system context: {sys_context}[/dim]")
+        memory_client.add_memory(sys_context, metadata={"type": "system_info"})
+    else:
+        # console.print("[dim]🧠 System context already known.[/dim]")
+        pass
 
 video_manager = VideoManager(executor, llm_client)
 
@@ -61,11 +103,20 @@ command_generator = CommandGenerator(llm_client, sys_detector.get_info())
 @app.command()
 def chat(prompt: str):
     """
-    Chat with Jarvis.
+    Chat with Nexus.
     """
     console.print(Panel(f"[bold blue]User:[/bold blue] {prompt}", title="Chat"))
-    response = llm_client.generate_response(prompt)
-    console.print(Panel(f"[bold green]Jarvis:[/bold green] {response}", title="Response"))
+    
+    # Enforce Identity
+    nexus_prompt = (
+        "You are Nexus, an elite intelligent Linux Assistant. "
+        "You are helpful, precise, and favor blue/cyan aesthetics. "
+        "Never identify as ChatGPT. "
+        f"User: {prompt}"
+    )
+    
+    response = llm_client.generate_response(nexus_prompt)
+    console.print(Panel(f"[bold cyan]Nexus:[/bold cyan] {response}", title="Response"))
 
 @app.command()
 def install(package: str):
@@ -112,7 +163,7 @@ def do(request: str):
     
     # 1. Generate Command
     if isinstance(llm_client, MockLLMClient):
-         console.print("[yellow]No API Key found. Using mock mode. Set JARVIS_API_KEY to use real AI.[/yellow]")
+         console.print("[yellow]No API Key found. Using mock mode. Set Keys to use real AI.[/yellow]")
     
     command = command_generator.generate_command(request)
     
@@ -199,7 +250,7 @@ def video(prompt: str):
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
-    Jarvis: Your AI Linux Assistant.
+    Nexus: Your AI Linux Assistant.
     """
     if ctx.invoked_subcommand is None:
         # Launch TUI
@@ -216,7 +267,9 @@ def main(ctx: typer.Context):
             llm_client=llm_client, 
             video_manager=video_manager, 
             browser_manager=browser_manager,
-            executor=executor
+            executor=executor,
+            app_installer=app_installer,
+            router_client=router_client
         )
         
         try:

@@ -98,3 +98,14 @@ Store user preferences and history to make Jarvis smarter over time.
     - **Task History**: Log successfully executed complex tasks for re-use.
     - **Knowledge Base**: simple vector store (like ChromaDB or FAISS) to remember specific user instructions ("My server IP is 10.0.0.5").
 
+## 9. Onboarding & Flexible Architecture
+**First-Run Experience**:
+- **Welcome Sequence**: Triggered only on the first run.
+- **BYO Keys**: Support multiple providers dynamically.
+    - **Google** (Required for Search Tool)
+    - **OpenRouter** (Required for Chat)
+    - **Groq** (Optional, for speed)
+- **Memory Integration Selection**:
+    - Prompt: "Do you want to add memory to your agent? (yes/no)"
+    - **Supermemory Integration**: If yes, configure Supermemory for persistent context.
+

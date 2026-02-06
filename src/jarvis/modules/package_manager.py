@@ -67,7 +67,9 @@ class AppInstaller:
     def _get_update_command(self) -> Optional[str]:
         pm = self.sys_info.package_manager
         if pm == PackageManager.APT:
-            return "apt-get update && apt-get upgrade -y"
+            # We explicitly add sudo to the second command because 'sudo command1 && command2' 
+            # only runs command1 as root.
+            return "apt-get update && sudo apt-get upgrade -y"
         elif pm == PackageManager.DNF:
             return "dnf upgrade -y"
         elif pm == PackageManager.PACMAN:

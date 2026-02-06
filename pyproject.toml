@@ -3,7 +3,7 @@ name = "jarvis-assistant"
 version = "0.1.0"
 description = "A Linux assistant that lives in your terminal."
 authors = [
-    {name = "User", email = "user@example.com"},
+    {name = "garvit", email = "garvitjoshi543@gmail.com"},
 ]
 dependencies = [
     "typer[all]>=0.9.0",
@@ -22,7 +22,7 @@ dependencies = [
 requires-python = ">=3.10"
 
 [project.scripts]
-jarvis = "jarvis.main:app"
+nexus = "jarvis.main:app"
 
 [build-system]
 requires = ["hatchling"]
