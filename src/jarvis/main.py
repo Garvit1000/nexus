@@ -49,10 +49,38 @@ if not config_mgr.config.onboarding_completed:
     config_mgr = ConfigManager()
 
 # Setup AI
-# Prioritize keys from config, then env vars
+# Prioritize Groq (User Preference), then OpenRouter, then Google, then Mock
 api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY") 
 openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
+groq_key = config_mgr.config.groq_api_key or os.getenv("GROQ_API_KEY")
 
+llm_client = None
+router_client = None
+
+# 1. Setup Groq (Preferred Brain / Limbic System)
+# Used for DECISIONS (Router) always if available
+if groq_key:
+    try:
+        groq_client = GroqClient(api_key=groq_key, model="moonshotai/kimi-k2-instruct-0905")
+        router_client = groq_client
+        console.print("[dim green]⚡ Groq Brain Activated (Decisions + Fallback)[/dim green]")
+    except Exception as e:
+        console.print(f"[dim red]Failed to init Groq: {e}[/dim red]")
+
+# 2. Setup Chat Brain (Cortex)
+# Priority: OpenRouter (GPT-4o/etc) -> Groq (Kimi) -> Google (Gemini) -> Mock
+if openrouter_key:
+    llm_client = OpenRouterClient(api_key=openrouter_key)
+    console.print("[dim blue]🧠 OpenRouter (GPT) Activated for Chat[/dim blue]")
+elif router_client: # Fallback to Groq if OpenRouter/OpenAI key missing
+    llm_client = router_client
+    console.print("[dim green]🧠 Kimi (Groq) Activated for Chat (Fallback)[/dim green]")
+elif api_key:
+    llm_client = GoogleGenAIClient(api_key=api_key)
+    console.print("[dim blue]🧠 Gemini Activated for Chat (Fallback)[/dim blue]")
+else:
+    llm_client = MockLLMClient()
+    console.print("[dim yellow]⚠️ Mock Mode Activated[/dim yellow]")
 
 # Setup Browser Manager (Local)
 browser_manager = None
@@ -61,22 +89,9 @@ if openrouter_key: # Browser manager works best with OpenRouter/OpenAI
         api_key=api_key if api_key else "dummy", # It might use specific key
         openrouter_key=openrouter_key,
     )
-if openrouter_key:
-     llm_client = OpenRouterClient(api_key=openrouter_key)
-elif api_key:
-     llm_client = GoogleGenAIClient(api_key=api_key)
-else:
-     llm_client = MockLLMClient()
 
-# Setup Groq Router (Limbic System)
-groq_key = config_mgr.config.groq_api_key or os.getenv("GROQ_API_KEY")
-router_client = None
-if groq_key:
-    try:
-        router_client = GroqClient(api_key=groq_key)
-        console.print("[dim green]⚡ Groq Brain Activated[/dim green]")
-    except Exception as e:
-        console.print(f"[dim red]Failed to init Groq: {e}[/dim red]")
+# Setup Memory (if enabled)
+if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
 
     from .ai.memory_client import SupermemoryClient
     memory_client = SupermemoryClient(api_key=config_mgr.config.supermemory_api_key)
@@ -172,6 +187,24 @@ def do(request: str):
     # 2. Execute (Executor handles safety and confirmation)
     return_code, stdout, stderr = executor.run(command)
     
+    # --- Feedback Loop (Phase 7) ---
+    if hasattr(llm_client, "memory_client") and llm_client.memory_client:
+        status = "Success" if return_code == 0 else "Failure"
+        output_snippet = stdout[:200] if return_code == 0 else stderr[:200]
+        
+        memory_content = f"Action Feedback:\nRequest: {request}\nCommand: {command}\nResult: {status}\nOutput: {output_snippet}"
+        meta = {
+            "type": "feedback",
+            "request": request,
+            "command": command,
+            "status": status
+        }
+        try:
+            llm_client.memory_client.add_memory(memory_content, metadata=meta)
+            console.print(f"[dim]📝 Experience recorded: {status}[/dim]")
+        except Exception:
+            pass
+
     if return_code == 0:
         if stdout:
             console.print(Panel(stdout, title="Output", border_style="green"))

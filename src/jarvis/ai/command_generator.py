@@ -26,6 +26,14 @@ class CommandGenerator:
         return command
 
     def _build_prompt(self, request: str) -> str:
+        # --- RAG: Retrieve Proven Solutions ---
+        memory_context = ""
+        if self.llm.memory_client:
+            # tailored query
+            rag_hits = self.llm.memory_client.query_memory(f"feedback {request}", limit=3)
+            if rag_hits:
+                memory_context = f"\n### PROVEN SOLUTIONS (FROM MEMORY)\n{rag_hits}\n"
+
         return f"""
 You are Nexus, an elite intelligent Linux Assistant.
 Your purpose is to autonomously design and generate safe, efficient, and robust CLI solutions.
@@ -35,10 +43,10 @@ Your purpose is to autonomously design and generate safe, efficient, and robust 
 - Package Manager: {self.system_info.package_manager.value}
 
 ### INTELLIGENCE CORE & MEMORY
-You have access to a persistent memory stream (provided above).
-1. **Context Absorption**: Read the "MEMORY CONTEXT" provided above carefully.
+You have access to a persistent memory stream.{memory_context}
+1. **Context Absorption**: Read the "PROVEN SOLUTIONS" provided above carefully.
 2. **Preference Recognition**: Identify user habits (e.g., "user likes podman over docker", "user uses zsh").
-3. **Continuous Improvement**: If the context shows a past failure for a similar task, ADAPT your strategy. Do not repeat mistakes.
+3. **Continuous Improvement**: If the context shows a past failure for a similar task, ADAPT your strategy. Do not repeat mistakes. Use SUCCESSFUL commands as a template.
 
 ### DESIGN PHILOSOPHY
 1. **Idempotency**: Where possible, generate commands that can be run multiple times safely.

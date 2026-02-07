@@ -109,3 +109,6 @@ Store user preferences and history to make Jarvis smarter over time.
     - Prompt: "Do you want to add memory to your agent? (yes/no)"
     - **Supermemory Integration**: If yes, configure Supermemory for persistent context.
 
+
+
+/update  command works 
