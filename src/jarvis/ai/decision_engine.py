@@ -68,7 +68,11 @@ class DecisionEngine:
             query = text.replace("search for", "").replace("google ", "").strip()
             return Intent(action="COMMAND", command="/search", args=query, confidence=0.9)
 
-        # --- Slow Path: The Brain (LLM Reasoning) ---
+        # Transparency: Log model usage
+        model_name = getattr(self.llm_client, "model_name", "Unknown Model")
+        print(f"[dim]🧠 Decision Engine Thinking with: {model_name}[/dim]")
+
+        # --- Slow Path: LLM Analysis ---(LLM Reasoning) ---
         # Prefer the fast Router Client (Groq) if available, otherwise fallback to main LLM.
         active_client = self.router_client if self.router_client else self.llm_client
         
@@ -89,38 +93,71 @@ AVAILABLE COMMANDS:
 - /search <query>    : Google search (e.g. "who is ...", "weather in ...")
 - /video <prompt>    : Generate video
 - /browse <task>     : Browser automation
-- CHAT               : General conversation, coding help, or questions not covered above.
+- PLAN               : Complex requests requiring multiple steps (e.g. "download X and run it", "extract this and move it").
+- CHAT               : General conversation.
 
 RULES:
 1. If the user wants to PERFORM an action supported by a command, return the command.
 2. If the user just wants to chat or ask "how to", return CHAT.
-3. BE AGGRESSIVE about mapping to commands if the intent is clear (e.g., "I want to install X" -> /install X).
+3. If the request implies a sequence of actions (browser + terminal), return PLAN.
+4. BE AGGRESSIVE about mapping to commands if the intent is clear.
 
 OUTPUT FORMAT:
-Return ONLY the command string (e.g., "/install git") or "CHAT". Do not explain.
+Return a JSON object with:
+{{
+  "action": "COMMAND", "PLAN", or "CHAT",
+  "command": "/command args" (if action is COMMAND, else null),
+  "confidence": <float 0.0-1.0>,
+  "reasoning": "<brief explanation>"
+}}
 """
             try:
                 # We use a lower temperature if possible, but our client interface is simple.
-                response = active_client.generate_response(prompt).strip()
+                response_text = active_client.generate_response(prompt).strip()
                 
-                # Clean up response (sometimes LLMs add markdown)
-                response = response.replace("`", "").strip()
+                # Default fallback
+                intent_data = {"action": "CHAT", "confidence": 0.5, "reasoning": "Failed to parse Brain response."}
 
-                if response.startswith("/"):
-                    # Parse command and args
-                    parts = response.split(" ", 1)
-                    cmd = parts[0]
-                    args = parts[1] if len(parts) > 1 else ""
-                    
-                    return Intent(
-                        action="COMMAND",
-                        command=cmd,
-                        args=args,
-                        confidence=0.8,
-                        reasoning=f"Brain reasoned: '{response}'"
-                    )
-                else:
-                     return Intent(action="CHAT", confidence=0.5, reasoning="Brain decided this is general chat.")
+                # Try to parse JSON. Kimi/GPT might wrap in markdown blocks.
+                import json
+                clean_response = response_text.replace("```json", "").replace("```", "").strip()
+                try:
+                    intent_data = json.loads(clean_response)
+                except json.JSONDecodeError:
+                    # Fallback helper if JSON fails but text looks like a command
+                    if response_text.startswith("/"):
+                         parts = response_text.split(" ", 1)
+                         intent_data = {
+                             "action": "COMMAND",
+                             "command": response_text,
+                             "confidence": 0.7,
+                             "reasoning": "Raw command parsed from non-JSON output."
+                         }
+
+                action = intent_data.get("action", "CHAT").upper()
+                confidence = float(intent_data.get("confidence", 0.5))
+                reasoning = intent_data.get("reasoning", "")
+                
+                command_str = intent_data.get("command", "")
+                cmd = None
+                args = None
+                
+                if action == "COMMAND" and command_str:
+                     parts = command_str.split(" ", 1)
+                     cmd = parts[0]
+                     args = parts[1] if len(parts) > 1 else ""
+
+                return Intent(
+                    action=action,
+                    command=cmd,
+                    args=args,
+                    confidence=confidence,
+                    reasoning=reasoning
+                )
+
+            except Exception as e:
+                # If LLM logic fails completely
+                pass
 
             except Exception as e:
                 # If LLM fails, fall back to chat

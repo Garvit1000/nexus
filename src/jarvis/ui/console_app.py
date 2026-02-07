@@ -124,6 +124,22 @@ class JarvisApp:
             
         self.console.print() # Spacer after response
 
+    def record_feedback(self, command: str, success: bool, output: str):
+        """Records the result of an action to Supermemory."""
+        if self.llm_client and self.llm_client.memory_client:
+            status = "Success" if success else "Failure"
+            memory_content = f"Action Feedback:\nCommand: {command}\nResult: {status}\nOutput: {output}"
+            meta = {
+                "type": "feedback",
+                "command": command,
+                "status": status,
+            }
+            try:
+                self.llm_client.memory_client.add_memory(memory_content, metadata=meta)
+                self.console.print(f"[dim]📝 Experience recorded: {status}[/dim]")
+            except Exception:
+                pass
+
     async def handle_command(self, text: str):
         parts = text.split(" ", 1)
         command = parts[0].lower()
@@ -139,8 +155,10 @@ class JarvisApp:
                 loop = asyncio.get_event_loop()
                 result = await loop.run_in_executor(None, self.video_manager.generate_video, args)
                 self.console.print(Panel(str(result), title="Result", border_style="green"))
+                self.record_feedback(text, True, str(result)[:200])
             except Exception as e:
                 self.console.print(f"[red]Error:[/red] {e}")
+                self.record_feedback(text, False, str(e))
 
         elif command == "/browse":
             if not self.browser_manager:
@@ -152,8 +170,10 @@ class JarvisApp:
                  loop = asyncio.get_event_loop()
                  result = await loop.run_in_executor(None, self.browser_manager.run_task, args)
                  self.console.print(Panel(str(result), title="Result", border_style="green"))
+                 self.record_feedback(text, True, str(result)[:200])
             except Exception as e:
                 self.console.print(f"[red]Error:[/red] {e}")
+                self.record_feedback(text, False, str(e))
         
         elif command == "/search":
              if not self.llm_client:
@@ -165,10 +185,12 @@ class JarvisApp:
                  if hasattr(self.llm_client, "search"):
                       result = await loop.run_in_executor(None, self.llm_client.search, args)
                       self.console.print(Panel(result, title="Search Result", border_style="green"))
+                      self.record_feedback(text, True, str(result)[:200])
                  else:
                       self.console.print("[yellow]Search not supported by current LLM provider.[/yellow]")
              except Exception as e:
                  self.console.print(f"[red]Error searching:[/red] {e}")
+                 self.record_feedback(text, False, str(e))
 
         elif command == "/install":
              if not self.app_installer:
@@ -176,6 +198,7 @@ class JarvisApp:
                   return
              self.console.print(f"[bold cyan]Installing:[/bold cyan] {args}")
              success = self.app_installer.install(args)
+             self.record_feedback(text, success, "Package installed" if success else "Installation failed")
              if success:
                  self.console.print(f"[bold green]Successfully installed {args}![/bold green]")
              else:
@@ -187,6 +210,7 @@ class JarvisApp:
                   return
              self.console.print(f"[bold cyan]Removing:[/bold cyan] {args}")
              success = self.app_installer.remove(args)
+             self.record_feedback(text, success, "Package removed" if success else "Removal failed")
              if success:
                  self.console.print(f"[bold green]Successfully removed {args}![/bold green]")
              else:
@@ -198,6 +222,7 @@ class JarvisApp:
                   return
              self.console.print("[bold cyan]Updating System...[/bold cyan]")
              success = self.app_installer.update_system()
+             self.record_feedback(text, success, "System updated" if success else "Update failed")
              if success:
                  self.console.print("[bold green]System Updated![/bold green]")
              else:
@@ -224,9 +249,21 @@ class JarvisApp:
         decision = self.decision_engine.analyze(text)
         
         if decision.action == "COMMAND":
-            self.console.print(f"[dim italic]Detected intent: {decision.reasoning}[/dim italic]")
+            self.console.print(f"[dim italic]Detected intent: {decision.reasoning} (Confidence: {decision.confidence:.2f})[/dim italic]")
             cmd_str = f"{decision.command} {decision.args}" if decision.args else decision.command
             await self.handle_command(cmd_str)
+            return
+
+        elif decision.action == "PLAN":
+            self.console.print(f"[dim italic]Detected complex intent: {decision.reasoning} (Confidence: {decision.confidence:.2f})[/dim italic]")
+            # Lazy load orchestrator if needed/init in constructor
+            # For now, we assume it's initialized or we init it here
+            if not hasattr(self, "orchestrator") or not self.orchestrator:
+                 from ..core.orchestrator import Orchestrator
+                 self.orchestrator = Orchestrator(self.console, self.executor, self.browser_manager, self.llm_client)
+            
+            await self.orchestrator.execute_plan(text)
+            # Record feedback for the whole plan? Orchestrator handles individual steps.
             return
 
         if not self.llm_client:
