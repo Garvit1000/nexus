@@ -12,7 +12,7 @@ class CommandExecutor:
         self.dry_run = dry_run
         self.require_confirmation = require_confirmation
 
-    def run(self, command: str, require_sudo: bool = False, cwd: Optional[str] = None) -> Tuple[int, str, str]:
+    def run(self, command: str, require_sudo: bool = False, cwd: Optional[str] = None, require_confirmation: Optional[bool] = None) -> Tuple[int, str, str]:
         """
         Executes a shell command.
         Returns: (return_code, stdout, stderr)
@@ -34,7 +34,8 @@ class CommandExecutor:
             return 0, "Dry run", ""
 
         # 4. Confirmation
-        if self.require_confirmation:
+        should_confirm = self.require_confirmation if require_confirmation is None else require_confirmation
+        if should_confirm:
             if not confirm_action(f"Allow Jarvis to run: [cyan]{command}[/cyan]?", default=False):
                 return -1, "", "User cancelled execution"
 

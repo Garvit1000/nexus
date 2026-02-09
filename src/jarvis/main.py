@@ -13,9 +13,8 @@ from .core.executor import CommandExecutor
 from .modules.package_manager import AppInstaller
 from .modules.browser_manager import BrowserManager
 from .modules.video_manager import VideoManager
-from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient
-from .modules.video_manager import VideoManager
-from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient, GroqClient
+from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient, GroqClient, GroqGPTClient
+
 from .ai.memory_client import SupermemoryClient
 from .ai.command_generator import CommandGenerator
 from .ui.onboarding import OnboardingUI
@@ -53,6 +52,7 @@ if not config_mgr.config.onboarding_completed:
 api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY") 
 openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
 groq_key = config_mgr.config.groq_api_key or os.getenv("GROQ_API_KEY")
+groq_gpt_key = config_mgr.config.groq_gpt_api_key or os.getenv("GROQ_GPT_API_KEY") or groq_key
 
 llm_client = None
 router_client = None
@@ -68,11 +68,18 @@ if groq_key:
         console.print(f"[dim red]Failed to init Groq: {e}[/dim red]")
 
 # 2. Setup Chat Brain (Cortex)
-# Priority: OpenRouter (GPT-4o/etc) -> Groq (Kimi) -> Google (Gemini) -> Mock
+# Priority: OpenRouter (GPT-4o/etc) -> Groq GPT (openai/gpt-oss-120b) -> Groq (Kimi) -> Google (Gemini) -> Mock
 if openrouter_key:
     llm_client = OpenRouterClient(api_key=openrouter_key)
     console.print("[dim blue]🧠 OpenRouter (GPT) Activated for Chat[/dim blue]")
-elif router_client: # Fallback to Groq if OpenRouter/OpenAI key missing
+elif groq_gpt_key:  # Fallback to Groq GPT if OpenRouter missing
+    try:
+        llm_client = GroqGPTClient(api_key=groq_gpt_key, model="openai/gpt-oss-120b")
+        console.print("[dim cyan]🧠 Groq GPT (openai/gpt-oss-120b) Activated for Chat (Fallback)[/dim cyan]")
+    except Exception as e:
+        console.print(f"[dim red]Failed to init Groq GPT, using Kimi: {e}[/dim red]")
+        llm_client = router_client if router_client else None
+elif router_client:  # Fallback to Groq Kimi if Groq GPT failed
     llm_client = router_client
     console.print("[dim green]🧠 Kimi (Groq) Activated for Chat (Fallback)[/dim green]")
 elif api_key:
@@ -82,18 +89,33 @@ else:
     llm_client = MockLLMClient()
     console.print("[dim yellow]⚠️ Mock Mode Activated[/dim yellow]")
 
+# Final Safety Check: Ensure llm_client is not None
+if llm_client is None:
+    console.print("[dim red]Failed to initialize any AI client. Falling back to Mock Mode.[/dim red]")
+    llm_client = MockLLMClient()
+
+
 # Setup Browser Manager (Local)
 browser_manager = None
-if openrouter_key: # Browser manager works best with OpenRouter/OpenAI 
+# Priority: Google Gemini (best for vision) -> OpenRouter
+if api_key:  # Google API key available
     browser_manager = BrowserManager(
-        api_key=api_key if api_key else "dummy", # It might use specific key
+        api_key=api_key,
         openrouter_key=openrouter_key,
+        provider="google"  # Use Gemini for browser tasks
     )
+    console.print("[dim blue]🌐 Browser Manager: Using Gemini 2.5 Flash[/dim blue]")
+elif openrouter_key:  # Fallback to OpenRouter
+    browser_manager = BrowserManager(
+        api_key="dummy",
+        openrouter_key=openrouter_key,
+        provider="openrouter"
+    )
+    console.print("[dim cyan]🌐 Browser Manager: Using OpenRouter (Fallback)[/dim cyan]")
 
 # Setup Memory (if enabled)
 if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
 
-    from .ai.memory_client import SupermemoryClient
     memory_client = SupermemoryClient(api_key=config_mgr.config.supermemory_api_key)
     llm_client.set_memory_client(memory_client)
     
@@ -261,7 +283,7 @@ def search(query: str):
     
     console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Search Result"))
 
-    console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Search Result"))
+
 
 @app.command()
 def video(prompt: str):

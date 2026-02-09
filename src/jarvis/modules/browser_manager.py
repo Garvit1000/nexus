@@ -4,9 +4,10 @@ from langchain_openai import ChatOpenAI
 from browser_use_sdk import BrowserUse
 import asyncio
 import os
+from typing import Optional
 
 class BrowserManager:
-    def __init__(self, api_key: str, openrouter_key: str = None, provider: str = "google"):
+    def __init__(self, api_key: str, openrouter_key: Optional[str] = None, provider: str = "google"):
         self.api_key = api_key
         # Initialize the model for Local Mode
         if provider == "openrouter":
@@ -17,12 +18,12 @@ class BrowserManager:
              )
              self.use_vision = False # OpenRouter free models often don't support vision
         else:
-             # Default to Google (Gemini)
-             self.llm = ChatGoogle(
-                model="gemini-flash-latest", 
-                api_key=api_key
-             )
-             self.use_vision = False
+            # Default to Google (Gemini 2.5 Flash - best for browser tasks)
+            self.llm = ChatGoogle(
+               model="gemini-2.5-flash",
+               api_key=api_key
+            )
+            self.use_vision = True  # Gemini 2.5 supports vision
         
         # Initialize Cloud Client if key is available
         self.cloud_client = None
@@ -52,7 +53,6 @@ class BrowserManager:
                 return result.output
             else:
                 # Local Mode (Library)
-                # Local Mode (Library)
                 from browser_use import Browser
                 
                 # Smart Defaults: Force downloads to ~/Downloads
@@ -78,7 +78,8 @@ class BrowserManager:
                 )
 
                 # Transparency: Log the model being used
-                print(f"\n[bold magenta]🤖 Browser Agent Thinking with: {self.llm.model_name}[/bold magenta]")
+                model_name = getattr(self.llm, 'model_name', getattr(self.llm, 'model', 'Unknown Model'))
+                print(f"\n[bold magenta]🤖 Browser Agent Thinking with: {model_name}[/bold magenta]")
 
                 agent = Agent(
                     task=smart_task,

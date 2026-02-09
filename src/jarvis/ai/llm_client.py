@@ -10,23 +10,34 @@ class LLMClient(ABC):
         self.memory_client = client
 
     def enrich_prompt(self, prompt: str) -> str:
-        if self.memory_client:
-            # We use the prompt (which might be the user request) to query memory
-            # But if the prompt is a huge system instruction, this might be noisy.
-            # ideally we'd separate query from prompt. 
-            # For now, we'll assume the LLMClient caller handles clarity if needed,
-            # or we just prepend metadata.
-            
-            # Simple heuristic: If prompt is huge, maybe just use first 100 chars for query?
-            # Or trust Supermemory to handle it.
-            context = self.memory_client.query_memory(prompt[:500])
-            if context:
-                return f"--- MEMORY CONTEXT ---\n{context}\n--- END MEMORY ---\n\n{prompt}"
+        if prompt and self.memory_client:
+            try:
+                # We use the prompt (which might be the user request) to query memory
+                # But if the prompt is a huge system instruction, this might be noisy.
+                # ideally we'd separate query from prompt. 
+                # For now, we'll assume the LLMClient caller handles clarity if needed,
+                # or we just prepend metadata.
+                
+                # Simple heuristic: If prompt is huge, maybe just use first 100 chars for query?
+                # Or trust Supermemory to handle it.
+                context = self.memory_client.query_memory(prompt[:500])
+                if context:
+                    return f"--- MEMORY CONTEXT ---\n{context}\n--- END MEMORY ---\n\n{prompt}"
+            except Exception:
+                # If memory query fails, just return prompt
+                pass
         return prompt
 
     @abstractmethod
     def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         pass
+
+    def search(self, query: str) -> str:
+        """
+        Optional search method. Raises NotImplementedError if not supported.
+        """
+        raise NotImplementedError("Search not supported by this provider.")
+
 
 class MockLLMClient(LLMClient):
     def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
@@ -183,4 +194,50 @@ class GroqClient(LLMClient):
             return completion.choices[0].message.content or ""
         except Exception as e:
             return f"Error using Groq: {e}"
+
+
+class GroqGPTClient(LLMClient):
+    """
+    Client for Groq's GPT models (e.g., openai/gpt-oss-120b).
+    Provides fast access to GPT models with reasoning capabilities.
+    Great fallback when OpenRouter is unavailable.
+    """
+    def __init__(self, api_key: str, model: str = "openai/gpt-oss-120b"):
+        super().__init__()
+        try:
+            from groq import Groq
+        except ImportError:
+            raise ImportError("Groq library not installed. Run 'pip install groq'")
+            
+        self.client = Groq(api_key=api_key)
+        self.model = model
+
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
+        effective_prompt = self.enrich_prompt(prompt)
+        
+        # System message for identity enforcement
+        messages = [
+            {"role": "system", "content": (
+                "You are Nexus, an elite intelligent Linux Assistant. "
+                "You are NOT ChatGPT. You are NOT an OpenAI model. "
+                "You are a CLI tool created by Garvit. "
+                "Be helpful, precise, and favor blue/cyan aesthetics."
+            )},
+            {"role": "user", "content": effective_prompt}
+        ]
+        
+        try:
+            completion = self.client.chat.completions.create(
+                model=model or self.model,
+                messages=messages,
+                temperature=1,
+                max_completion_tokens=8192,
+                top_p=1,
+                # reasoning_effort="medium",  # GPT models support reasoning - commented out for safety
+                stream=False,  # Can be changed to True for streaming
+                stop=None
+            )
+            return completion.choices[0].message.content or ""
+        except Exception as e:
+            return f"Error using Groq GPT: {e}"
 
