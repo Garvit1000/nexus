@@ -28,11 +28,20 @@ class SupermemoryClient:
             logging.error(f"Failed to add memory: {e}")
             return False
 
-    def query_memory(self, query: str, limit: int = 3) -> str:
+    def query_memory(self, query: str, limit: int = 3, time_decay: bool = True) -> str:
         """
         Retrieves relevant context for a query using the official SDK.
+        
+        Args:
+            query: The search query
+            limit: Maximum number of results to return
+            time_decay: If True, prioritize recent memories
         """
         try:
+            # Add temporal bias to query if enabled
+            if time_decay:
+                query = f"recent {query}"
+            
             # SDK usage: client.search.execute(q=...)
             response = self.client.search.execute(q=query)
             
@@ -48,15 +57,73 @@ class SupermemoryClient:
             
             # Helper to extract content safely whether it's an object or dict
             def get_content(item):
-                if isinstance(item, dict):
-                    return item.get('content', '')
-                return getattr(item, 'content', '')
+                content = None
+                # Try common attribute names
+                for attr in ['content', 'document', 'text', 'page_content']:
+                    if isinstance(item, dict):
+                        content = item.get(attr)
+                    else:
+                        content = getattr(item, attr, None)
+                    if content:
+                        break
+                
+                # Fallback to string representation if still None
+                if content is None:
+                    # logging.warning(f"Could not extract content from memory item: {item}")
+                    return str(item)
+                return str(content)
 
             context_str = "\n".join([f"- {get_content(item)}" for item in results[:limit]])
             return f"Relevant Context from Memory:\n{context_str}\n"
         except Exception as e:
             logging.error(f"Failed to query memory: {e}")
             return ""
+
+    def log_execution(self, query: str, plan: list, status: str, output: str) -> bool:
+        """
+        Logs a full task execution lifecycle to Supermemory.
+        """
+        import json
+        from dataclasses import asdict, is_dataclass
+        try:
+            content = f"Task Execution Log:\nQuery: {query}\nOutcome: {status}\nOutput: {output[:500]}..."
+            
+            # Convert plan to dict - handle both dataclass and dict objects
+            plan_data = []
+            if plan:
+                for p in plan:
+                    if is_dataclass(p):
+                        plan_data.append(asdict(p))
+                    elif isinstance(p, dict):
+                        plan_data.append(p)
+                    else:
+                        plan_data.append(str(p))
+            
+            metadata = {
+                "type": "task_log",
+                "status": status,
+                "plan": json.dumps(plan_data),
+                "query": query
+            }
+            return self.add_memory(content, metadata)
+        except Exception as e:
+            logging.error(f"Failed to log execution: {e}")
+            return False
+
+    def retrieve_context(self, query: str) -> str:
+        """
+        Retrieves specific technical context: Past Plans and Past Errors.
+        """
+        plans = self.query_memory(f"plan for {query}", limit=2)
+        errors = self.query_memory(f"error in {query}", limit=2)
+        
+        context = ""
+        if "Relevant Context" in plans:
+            context += f"\n### 🧠 RELEVANT PAST PLANS:\n{plans}\n"
+        if "Relevant Context" in errors:
+            context += f"\n### ⚠️ PAST ERRORS & FIXES:\n{errors}\n"
+            
+        return context
 
 class MockMemoryClient(SupermemoryClient):
     def __init__(self):
@@ -67,4 +134,10 @@ class MockMemoryClient(SupermemoryClient):
         return True
         
     def query_memory(self, query: str, limit: int = 3) -> str:
+        return ""
+
+    def log_execution(self, query: str, plan: list, status: str, output: str) -> bool:
+        return True
+
+    def retrieve_context(self, query: str) -> str:
         return ""

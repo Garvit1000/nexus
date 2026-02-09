@@ -1,12 +1,14 @@
 import json
 import asyncio
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass
 from rich.console import Console
 from rich.live import Live
 from rich.table import Table
 from rich.panel import Panel
 from rich.status import Status
+from ..utils.io import confirm_action
+from .security import SafetyCheck
 
 @dataclass
 class TaskStep:
@@ -15,6 +17,7 @@ class TaskStep:
     action: str # BROWSER, TERMINAL, LLM
     command: str
     filename_pattern: Optional[str] = None # For Smart Resume (checking existing downloads)
+    use_cloud: bool = False # Headless/Cloud execution
     status: str = "pending" # pending, running, success, failed
     output: str = ""
 
@@ -24,7 +27,7 @@ class Planner:
 
     def create_plan(self, request: str) -> List[TaskStep]:
         # Transparency: Log model usage
-        model_name = getattr(self.llm_client, "model_name", "Unknown Model")
+        model_name = getattr(self.llm_client, "model_name", getattr(self.llm_client, "model", "Unknown Model"))
         print(f"[dim]🧠 Planner Thinking with: {model_name}[/dim]")
 
         # --- RAG: Retrieve Proven Plans ---
@@ -38,51 +41,61 @@ class Planner:
 
         prompt = f"""
 You are the Tactical Planner for Nexus.
-Break down this user request into a sequence of precise, verifiable steps.
+You are an expert system architect and operations manager.
+
+### CORE OBJECTIVE
+Break down the user's request into a bulletproof, idempotent execution plan.
 
 ### MEMORY CONTEXT
 {proven_context}
 
-REQUEST: "{request}"
+### REQUEST
+"{request}"
 
-AVAILABLE ACTIONS:
-- CHECK: Check if the request is already satisfied (e.g. check if app is installed).
-- BROWSER: Use the browser to download files, find info, or navigate.
-- TERMINAL: Run shell commands (e.g. tar, mv, sudo apt, git).
+### AVAILABLE ACTIONS
+- CHECK: **CRITICAL**. Verifies state. Returns 0 if satisfied (skips future steps), non-zero if not.
+- BROWSER: Downloads, searches, or web navigation.
+  - Optional: Set `"headless": true` to run in cloud mode (faster, no GUI).
+- TERMINAL: Shell commands.
 
-RULES:
-1. **IDEMPOTENCY (CRITICAL)**:
-   - Step 1 MUST be a `CHECK` action to see if the tool/app is already installed.
-   - Use `which <app>` or `dpkg -l | grep <app>`.
-   - If this passes (exit code 0), Nexus will skip the rest of the plan.
-2. **DOWNLOADS**: 
-   - Always download to `~/Downloads`.
-   - If Step 1 is a download, Step 2 MUST refer to the file as `<DOWNLOADED_FILE>`. Nexus will replace this with the actual filename detected.
-3. **handling FILE TYPES**:
-   - **.deb**: `sudo dpkg -i <DOWNLOADED_FILE> && sudo apt-get install -f`
-   - **.AppImage**: `chmod +x <DOWNLOADED_FILE> && ./<DOWNLOADED_FILE>` (or move to /opt)
-   - **.zip**: `unzip <DOWNLOADED_FILE> -d /tmp`
-   - **.tar.gz**: `tar -xzf <DOWNLOADED_FILE> -C /tmp`
-4. **SYSTEM INTEGRITY**: 
-   - Use `sudo` for any command modifying `/opt`, `/usr`, or `/etc`.
+### PLANNING PHILOSOPHY
+1. **Verify First**: Always start with a `CHECK` to see if the *GOAL* is already met.
+2. **Idempotency**: The plan should be safe to run multiple times.
+3. **Context Aware**: Use `context['last_output']` or `context['files']` to pass data between steps.
+   - Example: Step 1 finds a file, Step 2 moves it.
+4. **Robustness**: Handle potential failures.
+
+### TECHNICAL RULES
+1. **File Types**: Handle archives (.zip, .tar.gz) and installers (.deb, .AppImage) appropriately.
+2. **System Integrity**: Use `sudo` for system-wide changes.
+3. **Downloads**:
+   - If a file is downloaded, referring to it as `<DOWNLOADED_FILE>` in subsequent steps will fail if multiple files are involved.
+   - Instead, assume the file is in `~/Downloads` and use wildcards or `context` if needed.
+   - BUT, for simplicity, Nexus *will* try to auto-inject the last downloaded file path if you use `<DOWNLOADED_FILE>`.
+4. **Headless Mode (Autonomy)**:
+   - **DECISION HEURISTIC**:
+     - IF task is "read", "check", "monitor", "scrape" -> ALWAYS use `"headless": true` (faster, background).
+     - IF task is "show me", "open", "watch", "login" (interactive) -> Use `"headless": false`.
+   - **Default to headless** for any data retrieval task unless user explicitly asks to "see" it.
+
+### TASKS
+1. **Analyze**: What is the user *really* asking for?
+2. **Strategize**: What is the safest path?
+3. **Construct**: Build the JSON plan.
 
 OUTPUT FORMAT (JSON ONLY):
 [
   {{
-    "description": "Check if installed",
+    "description": "Check if goal is met",
     "action": "CHECK",
-    "command": "which postman"
+    "command": "check_command_here"
   }},
   {{
-    "description": "Download Target File",
+    "description": "Perform Action",
     "action": "BROWSER",
-    "command": "Download [Software] for Linux 64-bit from [OfficialSite]",
-    "filename_pattern": "postman*.tar.gz" 
-  }},
-  {{
-    "description": "Install/Extract",
-    "action": "TERMINAL",
-    "command": "sudo dpkg -i <DOWNLOADED_FILE>" 
+    "command": "command_here",
+    "filename_pattern": "pattern",
+    "headless": true
   }}
 ]
 """
@@ -99,7 +112,8 @@ OUTPUT FORMAT (JSON ONLY):
                     description=step_data.get("description", ""),
                     action=step_data.get("action", ""),
                     command=step_data.get("command", ""),
-                    filename_pattern=step_data.get("filename_pattern")
+                    filename_pattern=step_data.get("filename_pattern"),
+                    use_cloud=step_data.get("headless", False)
                 ))
             return steps
         except Exception as e:
@@ -111,6 +125,7 @@ class Orchestrator:
         self.console = console
         self.executor = executor
         self.browser_manager = browser_manager
+        self.llm_client = llm_client
         self.planner = Planner(llm_client)
 
     def generate_view(self, steps: List[TaskStep]) -> Table:
@@ -142,45 +157,54 @@ class Orchestrator:
             )
         return table
 
-    async def execute_plan(self, request: str):
-        self.console.print(f"[bold cyan]🧠 Planning: {request}...[/bold cyan]")
-        steps = self.planner.create_plan(request)
-        
+    async def execute_plan(self, steps_or_request: Union[List[TaskStep], str]):
+        if isinstance(steps_or_request, str):
+            steps = self.planner.create_plan(steps_or_request)
+        else:
+            steps = steps_or_request
+
         if not steps:
-            self.console.print("[red]Failed to generate a plan.[/red]")
+            self.console.print("[yellow]No steps to execute.[/yellow]")
             return
 
         with Live(self.generate_view(steps), refresh_per_second=4, console=self.console) as live:
-            context = {"DOWNLOADED_FILE": None} 
+            context: Dict[str, Any] = {"files": [], "last_output": ""} 
+            success_count = 0
+            # Track overall status for memory
+            plan_status = "success"
+            final_output = ""
 
             for step in steps:
                 step.status = "running"
                 live.update(self.generate_view(steps))
                 
-                # Context Injection
-                if context["DOWNLOADED_FILE"] and "<DOWNLOADED_FILE>" in step.command:
-                    step.command = step.command.replace("<DOWNLOADED_FILE>", context["DOWNLOADED_FILE"])
+                # --- Context Injection ---
+                # 1. Replace <DOWNLOADED_FILE> with the last file found
+                if context["files"] and "<DOWNLOADED_FILE>" in step.command:
+                    step.command = step.command.replace("<DOWNLOADED_FILE>", context["files"][-1])
+                
+                # 2. Replace <LAST_OUTPUT> with stdout of previous command
+                if context["last_output"] and "<LAST_OUTPUT>" in step.command:
+                    step.command = step.command.replace("<LAST_OUTPUT>", context["last_output"].strip())
                 
                 # Execute based on action
                 try:
                     if step.action == "CHECK":
                         # Pre-Flight Check
-                        # If this command SUCCEEDS (0), it means the state is already verified, so we SKIP the rest.
-                        return_code, stdout, stderr = self.executor.run(step.command)
+                        return_code, stdout, stderr = await asyncio.to_thread(self.executor.run, step.command, False, None, False)
                         if return_code == 0:
-                            step.output = f"Check passed: {step.command}\nResource already exists. Skipping remaining steps."
+                            step.output = f"Check passed: {step.command}\nResource verified. Skipping remaining steps."
                             step.status = "success"
                             live.update(self.generate_view(steps))
                             self.console.print(f"[bold green]✨ State Verified: {stdout.strip()}. Task already completed.[/bold green]")
+                            # Log success before return
+                            self._log_plan_result(steps, "success", "Check verified goal already met.")
                             return # EXIT PLAN EARLY
                         else:
                             step.output = f"Check failed (Not found). Proceeding with plan."
-                            step.status = "failed" # It "failed" to find it, which is GOOD for the plan to proceed
-                            # We don't want to show a big red X for a normal check failure
-                            # So maybe we mark it as "success" (as in, check complete) but note it was not found?
-                            # Or we can just let it be "failed" but explicitly continue.
-                            # Let's mark it as "success" but with output "Not found, proceeding".
+                            step.description += " (Proceeding)"
                             step.status = "success" 
+                            live.update(self.generate_view(steps)) 
                     
                     elif step.action == "BROWSER":
                         # --- Smart Resume: Check if file already exists ---
@@ -191,28 +215,27 @@ class Orchestrator:
                             pattern = os.path.join(downloads_dir, step.filename_pattern)
                             matches = glob.glob(pattern)
                             if matches:
-                                # Pick the most recent one
                                 matches.sort(key=os.path.getmtime, reverse=True)
                                 existing_file = matches[0]
                                 step.output = f"Found existing file: {existing_file}\nSkipping Download."
-                                step.status = "success" # Marked success to proceed
-                                context["DOWNLOADED_FILE"] = existing_file
+                                step.status = "success"
+                                context["files"].append(existing_file)
                                 live.update(self.generate_view(steps))
                                 continue
 
                         if self.browser_manager:
                             # 1. Run Browser Task
-                            result = await asyncio.to_thread(self.browser_manager.run_task, step.command)
+                            result = await asyncio.to_thread(self.browser_manager.run_task, step.command, use_cloud=step.use_cloud)
                             step.output = str(result)
                             
-                            # 2. Wait for Download (Robustness)
-                            if "download" in step.description.lower() or "download" in step.command.lower():
+                            # 2. Wait for Download ONLY if pattern provided
+                            if step.filename_pattern:
                                 step.output += "\nWaiting for download..."
                                 live.update(self.generate_view(steps))
                                 downloaded_file = await self._wait_for_download()
                                 if downloaded_file:
                                     step.output += f"\nFile captured: {downloaded_file}"
-                                    context["DOWNLOADED_FILE"] = downloaded_file
+                                    context["files"].append(downloaded_file)
                                     step.status = "success"
                                 else:
                                     step.output += "\nDownload timeout or not found."
@@ -224,10 +247,23 @@ class Orchestrator:
                             step.status = "failed"
                             
                     elif step.action == "TERMINAL":
-                        # Smart context injection: Replace placeholders if we had them
-                        # For now, rely on LLM getting paths right or using generic paths
-                        return_code, stdout, stderr = self.executor.run(step.command)
-                        step.output = stdout if return_code == 0 else stderr
+                        # Handle sudo interactively
+                        if "sudo" in step.command or SafetyCheck.is_sudo_required(step.command):
+                            live.stop()
+                            try:
+                                return_code = await asyncio.to_thread(self.executor.run_interactive, step.command, False, None)
+                                stdout = "Command executed interactively."
+                                stderr = ""
+                            finally:
+                                live.start()
+                        else:
+                            return_code, stdout, stderr = await asyncio.to_thread(self.executor.run, step.command, False, None, False)
+                        
+                        # Store output for context
+                        if return_code == 0:
+                            context["last_output"] = stdout
+                        
+                        step.output = stdout if return_code == 0 else f"Failed (RC={return_code}): {stderr if stderr else 'Interactive error'}"
                         step.status = "success" if return_code == 0 else "failed"
 
                     else:
@@ -243,17 +279,17 @@ class Orchestrator:
                     
                     # Provide context to fixer
                     error_context = f"{step.output}\n(Context: {context})"
-                    fixed_command = self.reflect_and_fix(step.command, error_context)
+                    fixed_command = await asyncio.to_thread(self.reflect_and_fix, step.command, error_context)
                     if fixed_command:
                         self.console.print(f"[bold cyan]🔄 Retrying with:[/bold cyan] {fixed_command}")
                         step.command = fixed_command
                         # Retry once
                         try:
                             if step.action == "TERMINAL":
-                                rc, out, err = self.executor.run(fixed_command)
+                                rc, out, err = await asyncio.to_thread(self.executor.run, fixed_command, False, None, False)
                                 step.output = out if rc == 0 else err
                                 step.status = "success" if rc == 0 else "failed"
-                            # We don't verify Browser retries yet as they are elusive
+                                if rc == 0: context["last_output"] = out
                         except Exception as retry_e:
                             step.output = f"Retry failed: {retry_e}"
                             step.status = "failed"
@@ -262,28 +298,37 @@ class Orchestrator:
                 
                 if step.status == "success":
                     success_count += 1
+                    final_output = step.output  # Capture last successful output
                 else:
                     self.console.print(f"[red]Step {step.id} Failed: {step.output}[/red]")
+                    plan_status = "failed"
+                    final_output = step.output
                     break # Stop on failure
+            
+        # --- Display Final Results ---
+        if plan_status == "success" and final_output:
+            self.console.print("\n" + "="*60)
+            self.console.print(Panel(
+                final_output.strip(),
+                title="[bold green]✓ Task Completed[/bold green]",
+                border_style="green",
+                padding=(1, 2)
+            ))
+            self.console.print("="*60 + "\n")
+        
+        # --- Memory: Log Execution ---
+        self._log_plan_result(steps, plan_status, final_output)
+        
+        return final_output  # Return output for potential use by caller
 
-        # --- Record Success to Memory ---
-        if success_count == len(steps) and hasattr(self.planner.llm_client, "memory_client") and self.planner.llm_client.memory_client:
-            # We construct a summary of the plan
-            plan_summary = {
-                "request": request,
-                "steps": [
-                    {"action": s.action, "command": s.command, "description": s.description} 
-                    for s in steps
-                ]
-            }
-            # Add to memory
-            self.console.print(f"[dim]🧠 Memorizing successful plan for '{request}'...[/dim]")
-            asyncio.create_task(
-                self.planner.llm_client.memory_client.add_to_memory(
-                    f"Planned task: {request}", 
-                    metadata={"type": "plan", "content": json.dumps(plan_summary)}
-                )
-            )
+    def _log_plan_result(self, steps, status, output):
+        """Helper to log plan execution to memory"""
+        if hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client:
+            # Reconstruct original query roughly from description of step 1 for now, 
+            # or ideally pass request down. For now use Step 1 description as proxy query.
+            query_proxy = steps[0].description if steps else "Unknown Task"
+            self.llm_client.memory_client.log_execution(query_proxy, steps, status, output)
+            self.console.print(f"[dim]🧠 Task logged to memory: {status}[/dim]")
 
     async def _wait_for_download(self, timeout: int = 60) -> Optional[str]:
         """Watches ~/Downloads for a new file."""
