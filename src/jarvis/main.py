@@ -95,16 +95,30 @@ if llm_client is None:
     llm_client = MockLLMClient()
 
 
-# Setup Browser Manager (Local)
+# Setup Browser Manager (Local) with API Key Rotation
 browser_manager = None
-# Priority: Google Gemini (best for vision) -> OpenRouter
 if api_key:  # Google API key available
-    browser_manager = BrowserManager(
-        api_key=api_key,
-        openrouter_key=openrouter_key,
-        provider="google"  # Use Gemini for browser tasks
-    )
-    console.print("[dim blue]🌐 Browser Manager: Using Gemini 2.5 Flash[/dim blue]")
+    from .core.api_key_rotator import load_keys_from_env
+    
+    # Try to load multiple keys from environment
+    try:
+        key_rotator = load_keys_from_env()
+        browser_manager = BrowserManager(
+            api_key=key_rotator,  # Pass rotator instead of single key
+            openrouter_key=openrouter_key,
+            provider="google"
+        )
+        health = key_rotator.get_health_status()
+        console.print(f"[dim blue]🌐 Browser Manager: {health['total_keys']} Google API keys loaded (rotation enabled)[/dim blue]")
+    except ValueError:
+        # Fallback to single key if no additional keys found
+        browser_manager = BrowserManager(
+            api_key=api_key,
+            openrouter_key=openrouter_key,
+            provider="google"
+        )
+        console.print("[dim blue]🌐 Browser Manager: Using single Google API key[/dim blue]")
+        
 elif openrouter_key:  # Fallback to OpenRouter
     browser_manager = BrowserManager(
         api_key="dummy",
