@@ -24,6 +24,9 @@ class JarvisConfig:
     use_supermemory: bool = False
     supermemory_api_key: Optional[str] = None
     
+    # Translation & Voice (Sarvam.ai)
+    sarvam_api_key: Optional[str] = None
+    
     dangerous_mode: bool = False # Allow running without confirmation (not recommended)
     browser_use_api_key: Optional[str] = None
 
@@ -69,6 +72,8 @@ class ConfigManager:
             config.groq_gpt_api_key = os.getenv("GROQ_GPT_API_KEY")
         if os.getenv("SUPERMEMORY_API_KEY"):
             config.supermemory_api_key = os.getenv("SUPERMEMORY_API_KEY")
+        if os.getenv("SARVAM_API_KEY"):
+            config.sarvam_api_key = os.getenv("SARVAM_API_KEY")
             
         return config
 

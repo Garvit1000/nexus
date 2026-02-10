@@ -15,7 +15,7 @@ from prompt_toolkit.styles import Style as PromptStyle
 from ..ai.decision_engine import DecisionEngine
 
 class JarvisApp:
-    def __init__(self, llm_client=None, video_manager=None, browser_manager=None, executor=None, app_installer=None, router_client=None):
+    def __init__(self, llm_client=None, video_manager=None, browser_manager=None, executor=None, app_installer=None, router_client=None, translator=None, multilingual_ui=None, voice_handler=None):
         self.console = Console()
         self.session = PromptSession()
         self.is_running = True
@@ -25,6 +25,9 @@ class JarvisApp:
         self.browser_manager = browser_manager
         self.executor = executor
         self.app_installer = app_installer
+        self.translator = translator
+        self.multilingual_ui = multilingual_ui
+        self.voice_handler = voice_handler
         
         # Session Management - NEW
         from ..core.session_manager import SessionManager
@@ -264,9 +267,119 @@ class JarvisApp:
              - [cyan]/install <pkg>[/cyan]: Install a package
              - [cyan]/remove <pkg>[/cyan]: Remove a package
              - [cyan]/update[/cyan]: Update system
+             - [cyan]/translate <text> [--to lang][/cyan]: Translate text
+             - [cyan]/speak <text> --lang <code>[/cyan]: Text to speech
+             - [cyan]/voice --lang <code>[/cyan]: Voice command input
+             - [cyan]/lang <code>[/cyan]: Set preferred language
+             - [cyan]/langs[/cyan]: Show supported languages
              - [cyan]/exit[/cyan]: Exit Jarvis
              """
              self.console.print(Panel(help_text, title="Help", border_style="white"))
+             return True
+        
+        elif command == "/translate":
+             if not self.translator:
+                  self.console.print("[red]Translator is not initialized.[/red]")
+                  return False
+             
+             # Parse args: text and optional --to flag
+             parts = args.split("--to")
+             text = parts[0].strip()
+             target_lang = parts[1].strip() if len(parts) > 1 else "en"
+             
+             result = self.translator.detect_and_translate(text, target_lang=target_lang)
+             self.multilingual_ui.print_translation(result, show_original=True)
+             return True
+        
+        elif command == "/speak":
+             if not self.translator:
+                  self.console.print("[red]Translator is not initialized.[/red]")
+                  return False
+             
+             # Parse: /speak <text> --lang <code>
+             parts = args.split("--lang")
+             text = parts[0].strip()
+             lang = parts[1].strip() if len(parts) > 1 else "hi-IN"
+             
+             self.multilingual_ui.print_voice_status("Generating speech...", lang)
+             output_path = "/tmp/nexus_speech.mp3"
+             success = self.translator.text_to_speech(text, output_path, language=lang)
+             
+             if success:
+                  self.multilingual_ui.print_voice_status("Complete!", lang)
+                  self.console.print(f"[green]✓ Audio saved: {output_path}[/green]")
+                  
+                  # Try to play MP3
+                  try:
+                       import subprocess
+                       try:
+                           subprocess.run(["mpg123", "-q", output_path], check=True, stderr=subprocess.DEVNULL)
+                       except FileNotFoundError:
+                           subprocess.run(["ffplay", "-nodisp", "-autoexit", output_path],
+                                        check=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+                  except:
+                       pass
+             else:
+                  self.console.print("[red]Failed to generate speech[/red]")
+             return success
+        
+        elif command == "/voice":
+             if not self.voice_handler:
+                  self.console.print("[red]Voice handler is not initialized.[/red]")
+                  return False
+             
+             # Parse: /voice --lang <code> --duration <sec>
+             import re
+             lang_match = re.search(r'--lang\s+(\S+)', args)
+             dur_match = re.search(r'--duration\s+(\d+)', args)
+             
+             lang = lang_match.group(1) if lang_match else "hi-IN"
+             duration = int(dur_match.group(1)) if dur_match else 5
+             
+             self.multilingual_ui.print_voice_status("Recording...", lang)
+             audio_path = self.voice_handler.record_audio(duration=duration)
+             
+             if not audio_path:
+                  self.console.print("[red]Recording failed[/red]")
+                  return False
+             
+             self.multilingual_ui.print_voice_status("Processing...", lang)
+             command_text = self.voice_handler.process_voice_command(audio_path, language=lang)
+             
+             if command_text:
+                  self.multilingual_ui.print_voice_status("Success!", lang)
+                  self.console.print(Panel(
+                       f"[cyan]Recognized:[/cyan]\n{command_text}",
+                       title="Voice Command",
+                       border_style="green"
+                  ))
+                  # Process as chat
+                  loop = asyncio.get_event_loop()
+                  loop.create_task(self.handle_chat(command_text))
+                  return True
+             else:
+                  self.console.print("[red]Failed to recognize speech[/red]")
+                  return False
+        
+        elif command == "/lang":
+             if not self.translator:
+                  self.console.print("[red]Translator is not initialized.[/red]")
+                  return False
+             
+             lang_code = args.strip()
+             self.translator.set_user_language(lang_code)
+             self.translator.enable_auto_translate(lang_code != "en")
+             
+             self.console.print(f"[bold green]✓ Language set to:[/bold green] {lang_code}")
+             return True
+        
+        elif command == "/langs":
+             if not self.translator:
+                  self.console.print("[red]Translator is not initialized.[/red]")
+                  return False
+             
+             languages = self.translator.get_supported_languages()
+             self.multilingual_ui.print_language_selector(languages, self.translator.user_language)
              return True
 
         else:
@@ -274,6 +387,28 @@ class JarvisApp:
             return False
 
     async def handle_chat(self, text: str):
+        # --- Multilingual Input Processing ---
+        original_text = text
+        
+        # If translator is available and enabled, detect and translate to English if needed
+        if self.translator and self.translator.enabled:
+            try:
+                detected_lang = self.translator.client.detect_language(text)
+                
+                # Show detected language only if it's not English
+                if detected_lang and detected_lang != "en":
+                    self.multilingual_ui.print_language_detection(detected_lang)
+                    
+                    # Translate to English for command processing
+                    text = self.translator.translate_to_english(text)
+                    
+                    if text != original_text:
+                        self.console.print(f"[dim cyan]Translated input: {text}[/dim cyan]")
+            except Exception as e:
+                # Silent fallback - continue with original text
+                import logging
+                logging.debug(f"Translation skipped: {e}")
+        
         # --- Intelligent Decision Engine (with session awareness) ---
         decision = self.decision_engine.analyze(text)
         
@@ -381,8 +516,21 @@ class JarvisApp:
             success=True
         )
 
-        # Print the response nicely
-        self.console.print(Markdown(response), style="white")
+        # --- Multilingual Response Support ---
+        if self.translator and self.translator.auto_translate and self.translator.user_language != "en":
+            # Translate response to user's language
+            translated = self.translator.translate_to_user_language(response)
+            
+            # Show both or just translated based on preference
+            self.multilingual_ui.print_multilingual_response(
+                english_text=response,
+                translated_text=translated,
+                target_lang=self.translator.user_language,
+                show_both=False  # Show only translated version
+            )
+        else:
+            # Print the response nicely
+            self.console.print(Markdown(response), style="white")
 
 if __name__ == "__main__":
     # Mock run

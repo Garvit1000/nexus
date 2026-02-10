@@ -18,6 +18,8 @@ from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenR
 from .ai.memory_client import SupermemoryClient
 from .ai.command_generator import CommandGenerator
 from .ui.onboarding import OnboardingUI
+from .modules.translator import TranslatorModule, VoiceCommandHandler
+from .ui.multilingual_ui import MultilingualUI
 
 app = typer.Typer(
     name="nexus",
@@ -49,10 +51,11 @@ if not config_mgr.config.onboarding_completed:
 
 # Setup AI
 # Prioritize Groq (User Preference), then OpenRouter, then Google, then Mock
-api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY") 
+api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY")
 openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
 groq_key = config_mgr.config.groq_api_key or os.getenv("GROQ_API_KEY")
 groq_gpt_key = config_mgr.config.groq_gpt_api_key or os.getenv("GROQ_GPT_API_KEY") or groq_key
+sarvam_key = config_mgr.config.sarvam_api_key or os.getenv("SARVAM_API_KEY")
 
 llm_client = None
 router_client = None
@@ -150,6 +153,16 @@ if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
 video_manager = VideoManager(executor, llm_client)
 
 command_generator = CommandGenerator(llm_client, sys_detector.get_info())
+
+# Setup Translation Module
+translator = TranslatorModule(api_key=sarvam_key, use_mock=(not sarvam_key))
+multilingual_ui = MultilingualUI(console)
+voice_handler = VoiceCommandHandler(translator)
+
+if sarvam_key:
+    console.print("[dim green]🌐 Sarvam.ai Translation Activated[/dim green]")
+else:
+    console.print("[dim yellow]🌐 Translation in Mock Mode (Set SARVAM_API_KEY for real translation)[/dim yellow]")
 
 @app.command()
 def chat(prompt: str):
@@ -316,6 +329,118 @@ def video(prompt: str):
         
     console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Video Output"))
 
+@app.command()
+def translate(
+    text: str,
+    to: str = typer.Option("en", "--to", help="Target language code (e.g., hi-IN, ta-IN)")
+):
+    """
+    Translate text between languages.
+    Example: nexus translate "Hello, how are you?" --to hi-IN
+    """
+    result = translator.detect_and_translate(text, target_lang=to)
+    multilingual_ui.print_translation(result, show_original=True)
+
+@app.command()
+def speak(
+    text: str,
+    lang: str = typer.Option("hi-IN", "--lang", help="Language code for speech"),
+    output: str = typer.Option("/tmp/nexus_speech.mp3", "--output", help="Output file path")
+):
+    """
+    Convert text to speech.
+    Example: nexus speak "नमस्ते, मैं नेक्सस हूं" --lang hi-IN
+    """
+    console.print(f"[dim cyan]Generating speech in {lang}...[/dim cyan]")
+    
+    success = translator.text_to_speech(text, output, language=lang)
+    
+    if success:
+        console.print(f"[bold green]✓ Speech generated:[/bold green] {output}")
+        
+        # Attempt to play MP3
+        try:
+            import subprocess
+            # Try mpg123 first, then ffplay
+            try:
+                subprocess.run(["mpg123", "-q", output], check=True, stderr=subprocess.DEVNULL)
+                console.print("[green]Playback complete[/green]")
+            except FileNotFoundError:
+                subprocess.run(["ffplay", "-nodisp", "-autoexit", output],
+                             check=True, stderr=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+                console.print("[green]Playback complete[/green]")
+        except:
+            console.print("[yellow]Playback not available. File saved. Install mpg123: sudo apt install mpg123[/yellow]")
+    else:
+        console.print("[bold red]Failed to generate speech[/bold red]")
+
+@app.command()
+def voice(
+    lang: str = typer.Option("hi-IN", "--lang", help="Language code for recognition"),
+    duration: int = typer.Option(5, "--duration", help="Recording duration (seconds)")
+):
+    """
+    Record voice command and process it.
+    Example: nexus voice --lang hi-IN --duration 5
+    """
+    multilingual_ui.print_voice_status("Recording...", lang)
+    
+    # Record audio
+    audio_path = voice_handler.record_audio(duration=duration)
+    
+    if not audio_path:
+        console.print("[bold red]Recording failed[/bold red]")
+        return
+    
+    multilingual_ui.print_voice_status("Processing...", lang)
+    
+    # Process voice command
+    command = voice_handler.process_voice_command(audio_path, language=lang)
+    
+    if command:
+        multilingual_ui.print_voice_status("Complete!", lang)
+        console.print(Panel(
+            f"[bold cyan]Recognized Command:[/bold cyan]\n{command}",
+            title="Voice Input",
+            border_style="green"
+        ))
+        
+        # Ask if user wants to execute
+        if typer.confirm("Execute this command?"):
+            # Use the 'do' command logic
+            console.print(f"[dim]Executing: {command}...[/dim]")
+            from .ai.command_generator import CommandGenerator
+            cmd_gen = CommandGenerator(llm_client, sys_detector.get_info())
+            shell_cmd = cmd_gen.generate_command(command)
+            console.print(f"[bold]Generated Command:[/bold] [cyan]{shell_cmd}[/cyan]")
+            return_code, stdout, stderr = executor.run(shell_cmd)
+            if return_code == 0 and stdout:
+                console.print(Panel(stdout, title="Output", border_style="green"))
+            elif stderr:
+                console.print(Panel(stderr, title="Error", border_style="red"))
+    else:
+        console.print("[bold red]Failed to recognize speech[/bold red]")
+
+@app.command()
+def lang(code: str):
+    """
+    Set your preferred language.
+    Example: nexus lang hi-IN
+    """
+    translator.set_user_language(code)
+    translator.enable_auto_translate(code != "en")
+    
+    console.print(f"[bold green]✓ Language set to:[/bold green] {code}")
+    console.print(f"[dim]Auto-translation: {'enabled' if code != 'en' else 'disabled'}[/dim]")
+
+@app.command()
+def langs():
+    """
+    Show all supported languages.
+    """
+    languages = translator.get_supported_languages()
+    multilingual_ui.print_language_selector(languages, translator.user_language)
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
@@ -333,12 +458,15 @@ def main(ctx: typer.Context):
         # existing code initialized them globally, which is fine.
         
         tui = JarvisApp(
-            llm_client=llm_client, 
-            video_manager=video_manager, 
+            llm_client=llm_client,
+            video_manager=video_manager,
             browser_manager=browser_manager,
             executor=executor,
             app_installer=app_installer,
-            router_client=router_client
+            router_client=router_client,
+            translator=translator,
+            multilingual_ui=multilingual_ui,
+            voice_handler=voice_handler
         )
         
         try:
