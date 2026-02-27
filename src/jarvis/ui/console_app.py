@@ -15,13 +15,12 @@ from prompt_toolkit.styles import Style as PromptStyle
 from ..ai.decision_engine import DecisionEngine
 
 class JarvisApp:
-    def __init__(self, llm_client=None, video_manager=None, browser_manager=None, executor=None, app_installer=None, router_client=None):
+    def __init__(self, llm_client=None, browser_manager=None, executor=None, app_installer=None, router_client=None):
         self.console = Console()
         self.session = PromptSession()
         self.is_running = True
         
         self.llm_client = llm_client
-        self.video_manager = video_manager
         self.browser_manager = browser_manager
         self.executor = executor
         self.app_installer = app_installer
@@ -162,24 +161,7 @@ class JarvisApp:
         command = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
-        if command == "/video":
-            if not self.video_manager:
-                self.console.print("[red]Video Manager is not initialized.[/red]")
-                return False
-            
-            self.console.print(Panel(f"Generating video for: {args}", title="aremotion", border_style="magenta"))
-            try:
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, self.video_manager.generate_video, args)
-                self.console.print(Panel(str(result), title="Result", border_style="green"))
-                self.record_feedback(text, True, str(result)[:200])
-                return True
-            except Exception as e:
-                self.console.print(f"[red]Error:[/red] {e}")
-                self.record_feedback(text, False, str(e))
-                return False
-
-        elif command == "/browse":
+        if command == "/browse":
             if not self.browser_manager:
                 self.console.print("[red]Browser Manager is not initialized.[/red]")
                 return False
@@ -258,7 +240,6 @@ class JarvisApp:
         elif command == "/help":
              help_text = """
              [bold cyan]Available Commands:[/bold cyan]
-             - [cyan]/video <prompt>[/cyan]: Generate a video
              - [cyan]/browse <task>[/cyan]: Perform a browser task
              - [cyan]/search <query>[/cyan]: Search Google
              - [cyan]/install <pkg>[/cyan]: Install a package

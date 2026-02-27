@@ -12,7 +12,6 @@ from .core.system_detector import SystemDetector
 from .core.executor import CommandExecutor
 from .modules.package_manager import AppInstaller
 from .modules.browser_manager import BrowserManager
-from .modules.video_manager import VideoManager
 from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient, GroqClient, GroqGPTClient
 
 from .ai.memory_client import SupermemoryClient
@@ -134,8 +133,6 @@ if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
     else:
         # console.print("[dim]🧠 System context already known.[/dim]")
         pass
-
-video_manager = VideoManager(executor, llm_client)
 
 command_generator = CommandGenerator(llm_client, sys_detector.get_info())
 
@@ -287,25 +284,6 @@ def search(query: str):
     console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Search Result"))
 
 
-
-@app.command()
-def video(prompt: str):
-    """
-    Generate a video using Remotion and AI.
-    Example: jarvis video "Create a 5s countdown"
-    """
-    if isinstance(llm_client, MockLLMClient):
-        console.print("[yellow]Mock Mode: Cannot generate video without AI.[/yellow]")
-        return
-        
-    console.print(Panel(f"[bold magenta]Video Request:[/bold magenta] {prompt}", title="Remotion Video"))
-    
-    # Interactive process needs full terminal access, so no console.status spinner here
-    result = video_manager.generate_video(prompt)
-        
-    console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Video Output"))
-
-
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
@@ -319,12 +297,11 @@ def main(ctx: typer.Context):
         # Ensure dependencies are passed
         from .ui.console_app import JarvisApp
         
-        # We need to ensure dependencies like video_manager are initialized
+        # We need to ensure dependencies are initialized
         # existing code initialized them globally, which is fine.
         
         tui = JarvisApp(
             llm_client=llm_client,
-            video_manager=video_manager,
             browser_manager=browser_manager,
             executor=executor,
             app_installer=app_installer,
