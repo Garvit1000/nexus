@@ -7,9 +7,9 @@
 - 🧠 **Multi-Brain AI Architecture** - Specialized models for different tasks
 - 🤖 **Autonomous Web Browsing** - Automated tasks with browser-use
 - 💾 **Persistent Memory** - RAG-based context retention with Supermemory
-- 🔄 **Self-Healing Execution** - Auto-fix failed commands
+- 🔄 **Self-Healing Execution** - Auto-fix failed commands and auto-failover LLM routing
 - 🎯 **Intelligent Intent Recognition** - Context-aware decision making
-- 🔐 **Security First** - Command validation and confirmation
+- 🔐 **Security First** - AST-based defensive command validation and user confirmation
 
 ## 🏗️ Architecture Overview
 
@@ -90,7 +90,9 @@ Nexus uses different AI models for different purposes, creating a specialized "m
 | **Browser Agent** | **Gemini Flash** (`gemini-flash-latest`) | Web automation & navigation | Vision support + fast inference for UI understanding |
 | **Search Tool** | **Gemini 2.5 Flash** | Web search with citations | Native Google Search integration |
 
-### Model Priority System
+### Model Priority & Auto-Failover System
+
+Nexus implements a robust failover chain for critical components to ensure maximum uptime, seamlessly bypassing API rate limits (e.g. 429 errors from free-tier models).
 
 ```mermaid
 graph LR
@@ -98,7 +100,7 @@ graph LR
         R1[Groq: Kimi K2] --> R2[Fallback to Chat Brain]
     end
     
-    subgraph "Chat Brain Priority"
+    subgraph "Chat & Planner Priority (Auto-Failover)"
         C1[OpenRouter: GPT] --> C2[Groq: Kimi] --> C3[Google: Gemini] --> C4[Mock Mode]
     end
     
@@ -283,11 +285,11 @@ graph TB
 - **Self-Healing**: Auto-fixes failed commands using LLM reflection
 - **Live UI**: Real-time progress tracking with Rich tables
 
-#### `executor.py` - Safe Command Execution
-- Security checks via `SafetyCheck` module
-- User confirmation for dangerous commands
-- Dry-run mode support
-- Interactive mode for tools like `apt`, `npm`
+#### `executor.py` & `security.py` - Safe Command Execution
+- **AST-Based Command Validation**: Deep analysis of shell syntax to catch obfuscated attacks (e.g. `eval`, `cd / && rm -rf *`).
+- Strict blacklist filtering (blocks `rm -rf /`, `mkfs`, fork bombs `:(){ :|:& };:`).
+- User confirmation mandatory for dangerous or `sudo` operations.
+- Dry-run mode support.
 
 #### `config_manager.py` - Configuration Management
 - Stores API keys, preferences in `~/.config/jarvis/config.json`
@@ -421,11 +423,10 @@ Example: "Install Postman"
 2. **BROWSER**: Download from official site
 3. **TERMINAL**: Extract and install
 
-### Self-Healing Execution
-If a command fails, Nexus:
-1. Analyzes the error
-2. Asks LLM to fix the command
-3. Retries automatically
+### Self-Healing & Fallback Execution
+Nexus is built to gracefully handle failures at both the software and API level:
+1. **Auto-Failover LLM Routing**: If the primary AI model timeouts or hits a rate limit (429) during planning, Nexus instantly intercepts the exception and reroutes the generation request to the next available fallback model (e.g., OpenRouter → Groq).
+2. **Auto-Fix Commands**: If a terminal command fails, Nexus analyzes the `stderr`, asks the LLM to reflect and rewrite the command, and retries automatically.
 
 ### Smart Download Tracking
 - Monitors `~/Downloads` for new files

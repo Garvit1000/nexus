@@ -472,8 +472,8 @@ Fix the command to resolve the error. Return ONLY the fixed command string.
 If it's not fixable via command (e.g. network down), return "NO_FIX".
 """
         try:
-            # We use the planner's LLM client
-            fix = self.planner.llm_client.generate_response(prompt).strip().replace("`", "")
+            # We use the planner's primary LLM client
+            fix = self.planner.llm_clients[0].generate_response(prompt).strip().replace("`", "")
             if "NO_FIX" in fix:
                 return None
             return fix
