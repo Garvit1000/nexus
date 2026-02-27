@@ -7,8 +7,13 @@ import os
 from typing import Optional
 
 class BrowserManager:
-    def __init__(self, api_key: str, openrouter_key: Optional[str] = None, provider: str = "google"):
-        self.api_key = api_key
+    def __init__(self, api_key: str | object, openrouter_key: Optional[str] = None, provider: str = "google"):
+        if hasattr(api_key, 'get_current_key'):
+            self.key_rotator = api_key
+            self.api_key = api_key.get_current_key()
+        else:
+            self.key_rotator = None
+            self.api_key = api_key
         # Initialize the model for Local Mode
         if provider == "openrouter":
              self.llm = ChatOpenAI(

@@ -22,19 +22,20 @@ class TaskStep:
     output: str = ""
 
 class Planner:
-    def __init__(self, llm_client):
-        self.llm_client = llm_client
+    def __init__(self, llm_client, fallback_clients=None):
+        self.llm_clients = [llm_client]
+        if fallback_clients:
+            for client in fallback_clients:
+                if client not in self.llm_clients:
+                    self.llm_clients.append(client)
 
     def create_plan(self, request: str) -> List[TaskStep]:
-        # Transparency: Log model usage
-        model_name = getattr(self.llm_client, "model_name", getattr(self.llm_client, "model", "Unknown Model"))
-        print(f"[dim]🧠 Planner Thinking with: {model_name}[/dim]")
-
         # --- RAG: Retrieve Proven Plans ---
         proven_context = ""
-        if hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client:
+        primary_client = self.llm_clients[0]
+        if hasattr(primary_client, "memory_client") and primary_client.memory_client:
             # Query memory explicitly for plans
-            rag_hits = self.llm_client.memory_client.query_memory(f"planned task {request}", limit=1)
+            rag_hits = primary_client.memory_client.query_memory(f"planned task {request}", limit=1)
             if rag_hits:
                 print(f"[bold green]🧠 Recalled proven plan from memory![/bold green]")
                 proven_context = f"\n### PROVEN PAST PLAN (ADAPT THIS)\n{rag_hits}\n"
@@ -177,34 +178,42 @@ OUTPUT FORMAT (JSON ONLY):
   }}
 ]
 """
-        try:
-            response = self.llm_client.generate_response(prompt).strip()
-            # Clean generic markdown
-            clean_response = response.replace("```json", "").replace("```", "").strip()
-            plan_data = json.loads(clean_response)
-            
-            steps = []
-            for i, step_data in enumerate(plan_data, 1):
-                steps.append(TaskStep(
-                    id=i,
-                    description=step_data.get("description", ""),
-                    action=step_data.get("action", ""),
-                    command=step_data.get("command", ""),
-                    filename_pattern=step_data.get("filename_pattern"),
-                    use_cloud=step_data.get("headless", False)
-                ))
-            return steps
-        except Exception as e:
-            print(f"Planning failed: {e}")
-            return []
+        last_error = None
+        for client in self.llm_clients:
+            model_name = getattr(client, "model_name", getattr(client, "model", "Unknown Model"))
+            print(f"[dim]🧠 Planner Thinking with: {model_name}[/dim]")
+            try:
+                response = client.generate_response(prompt).strip()
+                # Clean generic markdown
+                clean_response = response.replace("```json", "").replace("```", "").strip()
+                plan_data = json.loads(clean_response)
+                
+                steps = []
+                for i, step_data in enumerate(plan_data, 1):
+                    steps.append(TaskStep(
+                        id=i,
+                        description=step_data.get("description", ""),
+                        action=step_data.get("action", ""),
+                        command=step_data.get("command", ""),
+                        filename_pattern=step_data.get("filename_pattern"),
+                        use_cloud=step_data.get("headless", False)
+                    ))
+                return steps
+            except Exception as e:
+                last_error = e
+                print(f"[dim yellow]⚠️ Planner {model_name} failed: {e}. Trying fallback...[/dim yellow]")
+                continue
+                
+        print(f"[bold red]Planning failed across all available AI clients. Last error: {last_error}[/bold red]")
+        return []
 
 class Orchestrator:
-    def __init__(self, console: Console, executor, browser_manager, llm_client):
+    def __init__(self, console: Console, executor, browser_manager, llm_client, fallback_clients=None):
         self.console = console
         self.executor = executor
         self.browser_manager = browser_manager
         self.llm_client = llm_client
-        self.planner = Planner(llm_client)
+        self.planner = Planner(llm_client, fallback_clients=fallback_clients)
 
     def generate_view(self, steps: List[TaskStep]) -> Table:
         table = Table(title="Nexus Execution Plan", expand=True, box=None)
@@ -243,6 +252,13 @@ class Orchestrator:
 
         if not steps:
             self.console.print("[yellow]No steps to execute.[/yellow]")
+            return
+            
+        # Display plan and ask for confirmation before executing
+        self.console.print(self.generate_view(steps))
+        from ..utils.io import confirm_action
+        if not confirm_action(f"Proceed with executing this {len(steps)}-step plan?", default=True):
+            self.console.print("[yellow]Plan cancelled by user.[/yellow]")
             return
 
         with Live(self.generate_view(steps), refresh_per_second=4, console=self.console) as live:
@@ -377,8 +393,12 @@ class Orchestrator:
                 if step.status == "success":
                     success_count += 1
                     final_output = step.output  # Capture last successful output
+                    
+                    # Print actual command output for transparency
+                    if step.output and step.output.strip():
+                        self.console.print(f"\n[dim cyan]► Output from Step {step.id} ({step.action}):[/dim cyan]\n{step.output.strip()}")
                 else:
-                    self.console.print(f"[red]Step {step.id} Failed: {step.output}[/red]")
+                    self.console.print(f"\n[bold red]⚠️ Step {step.id} Failed:[/bold red]\n{step.output}")
                     plan_status = "failed"
                     final_output = step.output
                     break # Stop on failure

@@ -15,12 +15,13 @@ from prompt_toolkit.styles import Style as PromptStyle
 from ..ai.decision_engine import DecisionEngine
 
 class JarvisApp:
-    def __init__(self, llm_client=None, browser_manager=None, executor=None, app_installer=None, router_client=None):
+    def __init__(self, llm_client=None, browser_manager=None, executor=None, app_installer=None, router_client=None, fallback_clients=None):
         self.console = Console()
         self.session = PromptSession()
         self.is_running = True
         
         self.llm_client = llm_client
+        self.fallback_clients = fallback_clients or []
         self.browser_manager = browser_manager
         self.executor = executor
         self.app_installer = app_installer
@@ -290,7 +291,13 @@ class JarvisApp:
             orchestrator = self.orchestrator
             if not orchestrator:
                  from ..core.orchestrator import Orchestrator
-                 orchestrator = Orchestrator(self.console, self.executor, self.browser_manager, self.llm_client)
+                 orchestrator = Orchestrator(
+                     self.console, 
+                     self.executor, 
+                     self.browser_manager, 
+                     self.llm_client, 
+                     fallback_clients=self.fallback_clients
+                 )
                  self.orchestrator = orchestrator
             
             result = await orchestrator.execute_plan(text)
