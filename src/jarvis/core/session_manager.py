@@ -154,6 +154,49 @@ class SessionManager:
             'success': last_turn.success
         }
     
+    def _is_semantically_related(self, current_input: str, previous_input: str) -> bool:
+        """
+        Check if two inputs are semantically related using keyword overlap.
+        
+        This prevents showing cached results from completely unrelated previous queries.
+        
+        Examples:
+            - "show that" (current) vs "download file" (previous) → True (pronoun reference)
+            - "show me news in delhi" (current) vs "download CodeWithHarry podcast" (previous) → False (unrelated)
+        """
+        current_lower = current_input.lower()
+        previous_lower = previous_input.lower()
+        
+        # Extract meaningful words (filter out common words)
+        stop_words = {
+            'show', 'me', 'the', 'a', 'an', 'in', 'on', 'at', 'to', 'for',
+            'of', 'and', 'or', 'but', 'is', 'are', 'was', 'were', 'be',
+            'get', 'give', 'make', 'do', 'my', 'your', 'it', 'this', 'that'
+        }
+        
+        def extract_keywords(text):
+            words = text.split()
+            return {w for w in words if len(w) > 2 and w not in stop_words}
+        
+        current_keywords = extract_keywords(current_lower)
+        previous_keywords = extract_keywords(previous_lower)
+        
+        # If current query has very few keywords (e.g., "show that"), it's a pronoun reference
+        # In this case, we trust the context reference detection
+        if len(current_keywords) <= 2:
+            return True  # Likely just pronoun reference, trust it
+        
+        # If current query has substantial keywords, check for overlap
+        if not current_keywords or not previous_keywords:
+            return False
+        
+        # Calculate keyword overlap
+        overlap = current_keywords & previous_keywords
+        overlap_ratio = len(overlap) / min(len(current_keywords), len(previous_keywords))
+        
+        # Require at least 30% keyword overlap for semantic relatedness
+        return overlap_ratio >= 0.3
+    
     def get_recent_history(self, limit: int = 5) -> List[Dict[str, Any]]:
         """
         Get recent conversation history.

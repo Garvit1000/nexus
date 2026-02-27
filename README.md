@@ -2,6 +2,15 @@
 
 **Nexus** is an intelligent, terminal-based Linux assistant that combines multiple AI models, memory systems, and automation capabilities to help you manage your system, browse the web, generate videos, and execute complex tasks through natural language.
 
+## ✨ Key Features
+
+- 🧠 **Multi-Brain AI Architecture** - Specialized models for different tasks
+- 🤖 **Autonomous Web Browsing** - Automated tasks with browser-use
+- 💾 **Persistent Memory** - RAG-based context retention with Supermemory
+- 🔄 **Self-Healing Execution** - Auto-fix failed commands
+- 🎯 **Intelligent Intent Recognition** - Context-aware decision making
+- 🔐 **Security First** - Command validation and confirmation
+
 ## 🏗️ Architecture Overview
 
 Nexus follows a modular, multi-brain architecture where different AI models handle specialized tasks:
@@ -27,8 +36,7 @@ graph TB
     subgraph "Execution Layer"
         Orchestrator[Orchestrator<br/>Multi-Step Task Execution]
         Executor[Command Executor<br/>Safety Checks + Confirmation]
-        Browser[Browser Manager<br/>browser-use + Playwright]
-        Video[Video Manager<br/>Remotion + AI Code Gen]
+        Browser[Browser Manager<br/>browser-use + API Key Rotation]
         Package[Package Manager<br/>apt/dnf/pacman]
     end
     
@@ -56,7 +64,6 @@ graph TB
     
     Executor --> Security
     Browser --> Executor
-    Video --> Executor
     Package --> Executor
     
     Config --> System
@@ -67,7 +74,7 @@ graph TB
     style Memory fill:#95e1d3
     style Orchestrator fill:#f38181
     style Browser fill:#aa96da
-    style Video fill:#fcbad3
+    style Session fill:#6c5ce7
 ```
 
 ## 🧠 AI Model Usage Map
@@ -76,13 +83,12 @@ Nexus uses different AI models for different purposes, creating a specialized "m
 
 | Component | Model Used | Purpose | Why This Model? |
 |-----------|------------|---------|-----------------|
-| **Router / Decision Engine** | **Groq: Kimi K2** (`moonshotai/kimi-k2-instruct-0905`) | Fast intent classification & routing | Ultra-fast inference (⚡ Groq), perfect for real-time decisions |
-| **Chat Brain** | **OpenRouter: GPT** (default) or **Groq: Kimi** (fallback) | Natural language conversations | Best reasoning & context understanding |
-| **Command Generator** | Primary LLM Client (OpenRouter/Groq/Gemini) | Convert natural language → shell commands | Needs strong code generation capabilities |
-| **Task Planner** | Primary LLM Client (OpenRouter/Groq/Gemini) | Break complex tasks into steps | Requires strategic thinking & planning |
-| **Browser Agent** | **Gemini Flash** (`gemini-flash-latest`) via `browser-use` | Web automation & navigation | Vision support + fast inference for UI understanding |
-| **Video Code Generator** | **Gemini 2.5 Flash** | Generate React/Remotion code | Excellent at code generation with low latency |
-| **Search Tool** | **Gemini 2.5 Flash** (with Google Search grounding) | Web search with citations | Native Google Search integration |
+| **Router / Decision Engine** | **Groq: Kimi K2** (`moonshotai/kimi-k2-instruct-0905`) | Fast intent classification & routing | Ultra-fast inference (⚡ Groq), robust decision framework |
+| **Chat Brain** | **OpenRouter: GPT** (default) or **Groq: Kimi** | Natural language conversations | Best reasoning & context understanding |
+| **Command Generator** | Primary LLM Client | Convert natural language → shell commands | Strong code generation capabilities |
+| **Task Planner** | Primary LLM Client | Break complex tasks into steps | Strategic thinking & planning with smart CHECK logic |
+| **Browser Agent** | **Gemini Flash** (`gemini-flash-latest`) | Web automation & navigation | Vision support + fast inference for UI understanding |
+| **Search Tool** | **Gemini 2.5 Flash** | Web search with citations | Native Google Search integration |
 
 ### Model Priority System
 
@@ -261,8 +267,8 @@ graph TB
 
 #### `decision_engine.py` - Intent Classification
 - **Fast Path**: Regex-based heuristics for common commands
-- **Slow Path**: LLM-based intent analysis (JSON structured output)
-- Routes to: COMMAND, CHAT, PLAN, SEARCH, BROWSE, VIDEO
+- **Slow Path**: LLM-based intent analysis with robust examples
+- Routes to: COMMAND, CHAT, PLAN, SEARCH, BROWSE
 
 #### `memory_client.py` - Supermemory Integration
 - Stores: System context, command feedback, successful plans, user preferences
@@ -301,12 +307,6 @@ graph TB
 - Smart download handling (~/Downloads tracking)
 - Uses Gemini Flash for vision-based UI understanding
 
-#### `video_manager.py` - AI Video Generation
-- Creates Remotion workspace automatically
-- Generates React/TypeScript code using Gemini 2.5 Flash
-- Validation loop: TypeScript compilation → Auto-fix → Retry
-- Renders videos using Remotion CLI
-
 #### `package_manager.py` - System Package Management
 - Unified interface for apt/dnf/pacman
 - Install, remove, update operations
@@ -317,8 +317,8 @@ graph TB
 #### `console_app.py` - Terminal User Interface
 - **Rich Console**: Panels, tables, markdown rendering
 - **Prompt Toolkit**: Async input with syntax highlighting
-- **Decision Engine Integration**: Auto-routes commands vs chat
-- **Command Handlers**: `/video`, `/browse`, `/search`, `/install`, etc.
+- **Session Management**: Context-aware responses
+- **Command Handlers**: `/browse`, `/search`, etc.
 
 #### `onboarding.py` - First-Run Setup
 - Collects API keys (Google, OpenRouter, Groq)
@@ -329,7 +329,6 @@ graph TB
 
 ### Prerequisites
 - Python 3.10 or higher
-- Node.js (for video generation)
 - Supported OS: Ubuntu, Debian, Fedora, Arch Linux
 
 ### Setup
@@ -402,11 +401,6 @@ nexus browse "Find MrBeast on YouTube"
 nexus browse --cloud "Download latest Chrome .deb"
 ```
 
-#### Video Generation
-```bash
-nexus video "Create a 5-second countdown timer"
-```
-
 #### Web Search
 ```bash
 nexus search "best restaurants in Dubai"
@@ -472,8 +466,7 @@ nexus/
 │   │   ├── system_detector.py
 │   │   └── security.py
 │   ├── modules/               # Feature modules
-│   │   ├── browser_manager.py
-│   │   ├── video_manager.py
+│   │   ├── browser_manager.py # With key rotation
 │   │   └── package_manager.py
 │   ├── ui/                    # User interfaces
 │   │   ├── console_app.py     # TUI

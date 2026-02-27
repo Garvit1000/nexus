@@ -11,7 +11,7 @@ This document provides a comprehensive breakdown of how different AI models are 
 | **Kimi K2 Instruct** | Groq | `groq` library | Router/Decision Engine | Free tier available | ⚡⚡⚡ Ultra-fast (10-100ms) |
 | **GPT-4o / GPT-OSS-120B** | OpenRouter | `openai` library | Chat Brain | Varies by model | ⚡⚡ Fast (500ms-2s) |
 | **Gemini Flash** | Google | `google-genai` | Browser automation | Free tier generous | ⚡⚡⚡ Fast (200-500ms) |
-| **Gemini 2.5 Flash** | Google | `google-genai` | Video code generation, Search | Free tier generous | ⚡⚡⚡ Fast (300-800ms) |
+| **Gemini 2.5 Flash** | Google | `google-genai` | Search | Free tier generous | ⚡⚡⚡ Fast (300-800ms) |
 
 ### Model Hierarchy
 
@@ -30,8 +30,7 @@ This document provides a comprehensive breakdown of how different AI models are 
 │ 1. OpenRouter  │    │                 │
 │ 2. Groq Kimi   │    │ • Browser:      │
 │ 3. Gemini      │    │   Gemini Flash  │
-│ 4. Mock        │    │ • Video:        │
-│                │    │   Gemini 2.5    │
+│ 4. Mock        │    │                │    │   Gemini 2.5    │
 └────────────────┘    │ • Search:       │
                       │   Gemini 2.5    │
                       └─────────────────┘
@@ -77,7 +76,6 @@ AVAILABLE COMMANDS:
 - /remove <package>
 - /update
 - /search <query>
-- /video <prompt>
 - /browse <task>
 - PLAN (complex multi-step)
 - CHAT (conversation)
@@ -242,7 +240,6 @@ response = self.client.models.generate_content(
 ```
 
 #### Usage Locations
-- **Video Manager** (`src/jarvis/modules/video_manager.py`): React/Remotion code generation
 - **Search Tool** (`src/jarvis/ai/llm_client.py`): Google Search grounding
 
 #### Why This Model?
@@ -251,31 +248,6 @@ response = self.client.models.generate_content(
 - **Search Integration**: Native Google Search grounding
 - **Cost**: Free tier
 
-#### Example: Video Code Generation
-```python
-# video_manager.py
-system_prompt = """
-You are an expert Remotion Developer.
-Write a 'Composition.tsx' file using React and Remotion.
-
-CORE RULES:
-- NO Hallucinations: Do NOT invent components
-- Use TransitionSeries API for sequencing
-- Animations via useCurrentFrame(), interpolate(), spring()
-- NO CSS animations
-
-REQUIRED EXPORTS:
-- export const MyComposition: React.FC = () => { ... }
-- export const durationInFrames = 150;
-
-OUTPUT: Return ONLY raw TypeScript code. No markdown.
-"""
-
-code = llm_client.generate_response(
-    f"{system_prompt}\n\nUSER REQUEST:\n{user_prompt}",
-    model="gemini-2.5-flash"
-)
-```
 
 #### Example: Search with Grounding
 ```python
@@ -318,7 +290,6 @@ flowchart TD
     Decision -->|Quick routing| Router[Use Groq: Kimi K2<br/>⚡ 10-100ms]
     Decision -->|Conversation| Chat{Chat Priority}
     Decision -->|Web automation| Browser[Use Gemini Flash<br/>🌐 Vision support]
-    Decision -->|Video generation| Video[Use Gemini 2.5 Flash<br/>🎬 Code gen]
     Decision -->|Web search| Search[Use Gemini 2.5 Flash<br/>🔍 Search grounding]
     
     Chat -->|1st choice| OpenRouter[OpenRouter: GPT<br/>🧠 Best reasoning]
@@ -329,7 +300,6 @@ flowchart TD
     style Router fill:#ff6b6b
     style OpenRouter fill:#4ecdc4
     style Browser fill:#aa96da
-    style Video fill:#fcbad3
     style Search fill:#95e1d3
 ```
 
@@ -369,7 +339,6 @@ if openrouter_key:  # Needs API key
 1. **Router**: Use Groq (free tier) for all routing decisions
 2. **Chat**: Use OpenRouter free models (`gpt-oss-120b:free`)
 3. **Browser**: Use Gemini Flash (generous free tier)
-4. **Video**: Use Gemini 2.5 Flash (free tier)
 5. **Search**: Use Gemini 2.5 Flash (free tier)
 
 ### Paid Tier Recommendations
@@ -380,7 +349,7 @@ For production use with higher quality:
 # .env configuration
 GROQ_API_KEY=<groq-key>           # Router (free tier OK)
 OPENROUTER_API_KEY=<key>          # Use GPT-4o for chat
-GOOGLE_API_KEY=<key>              # Browser, video, search
+GOOGLE_API_KEY=<key>              # Browser, search
 ```
 
 **Estimated Monthly Cost** (moderate usage):
@@ -405,7 +374,6 @@ GOOGLE_API_KEY=<key>              # Browser, video, search
 
 1. **RAG enhancement**: All prompts enriched with memory
 2. **Model selection**: Use best model for each task
-3. **Validation loops**: Video code validated before render
 4. **Self-healing**: Failed commands auto-fixed
 
 ---
@@ -414,7 +382,7 @@ GOOGLE_API_KEY=<key>              # Browser, video, search
 
 ```bash
 # Required for full functionality
-GOOGLE_API_KEY=<your-gemini-key>        # Browser, video, search
+GOOGLE_API_KEY=<your-gemini-key>        # Browser, search
 OPENROUTER_API_KEY=<your-key>           # Best chat quality
 GROQ_API_KEY=<your-groq-key>            # Fast routing (Kimi)
 

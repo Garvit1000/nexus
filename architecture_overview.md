@@ -33,7 +33,6 @@ graph TB
     
     subgraph "Layer 5: Specialized Modules"
         J[Browser Manager<br/>Gemini Flash<br/>🌐 Web Automation]
-        K[Video Manager<br/>Gemini 2.5 Flash<br/>🎬 Code Generation]
         L[Package Manager<br/>apt/dnf/pacman<br/>📦 System Packages]
     end
     
@@ -67,7 +66,6 @@ Nexus doesn't rely on a single AI model. Instead, it uses specialized models for
 | **Motor Cortex (Commands)** | Primary LLM | Code generation, shell expertise | Natural language → shell commands |
 | **Prefrontal Cortex (Planning)** | Primary LLM | Strategic thinking, task breakdown | Multi-step task orchestration |
 | **Visual Cortex (Browser)** | Gemini Flash | Vision + fast inference | Web UI understanding, automation |
-| **Creative Cortex (Video)** | Gemini 2.5 Flash | Code generation, low latency | React/Remotion code generation |
 
 ### Model Selection Logic
 
@@ -88,7 +86,6 @@ flowchart TD
     Decision -->|COMMAND| CmdGen[Command Generator<br/>Primary LLM]
     Decision -->|PLAN| Planner[Task Planner<br/>Primary LLM]
     Decision -->|BROWSE| Browser[Browser Manager<br/>Gemini Flash]
-    Decision -->|VIDEO| Video[Video Manager<br/>Gemini 2.5 Flash]
     Decision -->|SEARCH| Search[Search Tool<br/>Gemini 2.5 Flash]
     
     CmdGen --> Memory[(Supermemory<br/>RAG)]
@@ -98,7 +95,6 @@ flowchart TD
     style OpenRouter fill:#4ecdc4
     style Memory fill:#95e1d3
     style Browser fill:#aa96da
-    style Video fill:#fcbad3
 ```
 
 ## Data Flow Analysis
@@ -314,7 +310,6 @@ graph LR
 | Command Generation | 1-3s | Primary LLM | Includes RAG lookup |
 | Task Planning | 2-5s | Primary LLM | Complex reasoning |
 | Browser Automation | 10-60s | Gemini Flash | Depends on task |
-| Video Generation | 30-120s | Gemini 2.5 Flash | Code gen + render |
 
 ## Technology Stack
 
@@ -328,7 +323,6 @@ graph LR
 - **LLM Clients**: google-genai, openai, groq
 - **Browser Automation**: browser-use, playwright
 - **Memory**: supermemory (RAG)
-- **Video**: Remotion (React/TypeScript)
 
 ### System Integration
 - **Package Detection**: distro
