@@ -2,39 +2,22 @@
 
 **Nexus** is an intelligent, terminal-based Linux assistant that combines multiple AI models, memory systems, and automation capabilities to help you manage your system, browse the web, generate videos, and execute complex tasks through natural language.
 
-## ✨ Key Features
-
-- 🧠 **Multi-Brain AI Architecture** - Specialized models for different tasks
-- 🤖 **Autonomous Web Browsing** - Automated tasks with browser-use
-- 🎬 **AI Video Generation** - Create videos from text descriptions
-- 💾 **Persistent Memory** - RAG-based context retention with Supermemory
-- 🔄 **Self-Healing Execution** - Auto-fix failed commands
-- 🎯 **Intelligent Intent Recognition** - Context-aware decision making
-- 🔐 **Security First** - Command validation and confirmation
-
 ## 🏗️ Architecture Overview
 
-Nexus follows a modular, multi-brain architecture with robust decision-making:
+Nexus follows a modular, multi-brain architecture where different AI models handle specialized tasks:
 
 ```mermaid
 graph TB
     subgraph "User Interface Layer"
-        TUI[Terminal UI<br/>Rich Console + Multilingual]
+        TUI[Terminal UI<br/>Rich Console + Prompt Toolkit]
         CLI[CLI Commands<br/>Typer Framework]
-        end
+    end
     
     subgraph "Intelligence Layer - Multi-Brain System"
-        Session[Session Manager<br/>Context Tracking]
-        Router[Decision Engine<br/>Groq: Kimi K2 + Semantic Matching]
+        Router[Decision Engine<br/>Groq: Kimi K2]
         Chat[Chat Brain<br/>OpenRouter: GPT / Groq: Kimi]
         Planner[Task Planner<br/>Primary LLM Client]
         CmdGen[Command Generator<br/>Primary LLM Client]
-    end
-    
-    subgraph "Language Services"
-        Sarvam[Sarvam.ai Client<br/>Translation + Speech]
-        Translator[Translator Module<br/>Auto-detect + Preserve Terms]
-        MultiUI[Multilingual UI<br/>Bilingual Display]
     end
     
     subgraph "Memory System"
@@ -44,28 +27,22 @@ graph TB
     subgraph "Execution Layer"
         Orchestrator[Orchestrator<br/>Multi-Step Task Execution]
         Executor[Command Executor<br/>Safety Checks + Confirmation]
-        Browser[Browser Manager<br/>browser-use + API Key Rotation]
+        Browser[Browser Manager<br/>browser-use + Playwright]
         Video[Video Manager<br/>Remotion + AI Code Gen]
         Package[Package Manager<br/>apt/dnf/pacman]
     end
     
     subgraph "Core Services"
-        Config[Config Manager<br/>API Key Rotation]
+        Config[Config Manager<br/>~/.config/jarvis]
         System[System Detector<br/>OS + Package Manager]
         Security[Security Module<br/>Command Validation]
     end
     
-    TUI --> Session
-    CLI --> Session
-    
-    Session --> Router
+    TUI --> Router
+    CLI --> Router
     Router --> Chat
     Router --> Planner
     Router --> CmdGen
-    
-    Translator --> Sarvam
-    MultiUI --> TUI
-    Sarvam --> Voice
     
     Chat --> Memory
     Planner --> Memory
@@ -91,120 +68,179 @@ graph TB
     style Orchestrator fill:#f38181
     style Browser fill:#aa96da
     style Video fill:#fcbad3
-    style Session fill:#6c5ce7
 ```
 
 ## 🧠 AI Model Usage Map
 
-Nexus uses different AI models for specialized tasks, creating an intelligent "multi-brain" system:
+Nexus uses different AI models for different purposes, creating a specialized "multi-brain" system:
 
 | Component | Model Used | Purpose | Why This Model? |
 |-----------|------------|---------|-----------------|
-| **Router / Decision Engine** | **Groq: Kimi K2** (`moonshotai/kimi-k2-instruct-0905`) | Fast intent classification & routing | Ultra-fast inference (⚡ Groq), robust decision framework |
-| **Chat Brain** | **OpenRouter: GPT** (default) or **Groq: Kimi** | Natural language conversations | Best reasoning & context understanding |
-| **Command Generator** | Primary LLM Client | Convert natural language → shell commands | Strong code generation capabilities |
-| **Task Planner** | Primary LLM Client | Break complex tasks into steps | Strategic thinking & planning with smart CHECK logic |
-| **Browser Agent** | **Gemini Flash** (`gemini-flash-latest`) | Web automation & navigation | Vision support + fast inference for UI understanding |
+| **Router / Decision Engine** | **Groq: Kimi K2** (`moonshotai/kimi-k2-instruct-0905`) | Fast intent classification & routing | Ultra-fast inference (⚡ Groq), perfect for real-time decisions |
+| **Chat Brain** | **OpenRouter: GPT** (default) or **Groq: Kimi** (fallback) | Natural language conversations | Best reasoning & context understanding |
+| **Command Generator** | Primary LLM Client (OpenRouter/Groq/Gemini) | Convert natural language → shell commands | Needs strong code generation capabilities |
+| **Task Planner** | Primary LLM Client (OpenRouter/Groq/Gemini) | Break complex tasks into steps | Requires strategic thinking & planning |
+| **Browser Agent** | **Gemini Flash** (`gemini-flash-latest`) via `browser-use` | Web automation & navigation | Vision support + fast inference for UI understanding |
 | **Video Code Generator** | **Gemini 2.5 Flash** | Generate React/Remotion code | Excellent at code generation with low latency |
-| **Search Tool** | **Gemini 2.5 Flash** | Web search with citations | Native Google Search integration |
+| **Search Tool** | **Gemini 2.5 Flash** (with Google Search grounding) | Web search with citations | Native Google Search integration |
 
-## 🎯 Intelligent Decision Making
+### Model Priority System
 
-### Enhanced Context-Aware System
-
-Nexus features a **robust decision engine** with semantic understanding:
-
-1. **Smart Context Detection**
-   - Distinguishes between new requests and references to previous actions
-   - "show me latest news in delhi" → NEW request (detailed query)
-   - "show me that" → CONTEXT reference (pronoun-based)
-
-2. **Semantic Similarity Matching**
-   - Prevents false cache matches between unrelated queries
-   - Uses keyword overlap (30% threshold) for relatedness
-   - Example: Won't confuse "download video" with "show news"
-
-3. **Intelligent Planning**
-   - Distinguishes static (files) vs dynamic (news/weather) data
-   - Only adds CHECK steps when logically appropriate
-   - Minimal plans focused on user's actual request
-
-See [ROBUSTNESS_FIXES.md](ROBUSTNESS_FIXES.md) for technical details.
+```mermaid
+graph LR
+    subgraph "Decision/Router Brain"
+        R1[Groq: Kimi K2] --> R2[Fallback to Chat Brain]
+    end
+    
+    subgraph "Chat Brain Priority"
+        C1[OpenRouter: GPT] --> C2[Groq: Kimi] --> C3[Google: Gemini] --> C4[Mock Mode]
+    end
+    
+    subgraph "Specialized Tasks"
+        S1[Browser: Gemini Flash]
+        S2[Video: Gemini 2.5 Flash]
+        S3[Search: Gemini 2.5 Flash]
+    end
+    
+    R2 --> C1
+    
+    style R1 fill:#ff6b6b
+    style C1 fill:#4ecdc4
+    style S1 fill:#aa96da
+    style S2 fill:#fcbad3
+    style S3 fill:#95e1d3
+```
 
 ## 📊 System Flow Diagrams
 
-### 1. Enhanced User Input Processing Flow
+### 1. User Input Processing Flow
 
 ```mermaid
 sequenceDiagram
     participant User
-    participant Session
-    participant Translator
+    participant TUI
     participant DecisionEngine
-    participant Router
+    participant Router as Router Brain<br/>(Groq: Kimi)
+    participant ChatBrain
     participant Orchestrator
+    participant Executor
     
-    User->>Session: Input (any language)
-    
-    alt Non-English Input
-        Session->>Translator: Detect language
-        Translator->>Translator: Auto-translate to English
-        Translator-->>Session: Translated text
-    end
-    
-    Session->>Session: Check context reference
-    
-    alt Context Reference Detected
-        Session->>Session: Semantic similarity check
-        alt Related to previous query
-            Session-->>User: Return cached result
-        end
-    end
-    
-    Session->>DecisionEngine: Analyze intent
+    User->>TUI: Input text
+    TUI->>DecisionEngine: analyze(input)
     
     alt Fast Path: Heuristic Match
-        DecisionEngine-->>Session: Intent(COMMAND)
-    else Slow Path: LLM Analysis
-        DecisionEngine->>Router: Classify with framework
-        Router-->>DecisionEngine: Intent + Reasoning
+        DecisionEngine->>DecisionEngine: Regex patterns<br/>(install, remove, update)
+        DecisionEngine-->>TUI: Intent(COMMAND)
+    else Slow Path: AI Analysis
+        DecisionEngine->>Router: Classify intent
+        Router-->>DecisionEngine: JSON response
+        DecisionEngine-->>TUI: Intent(COMMAND/CHAT/PLAN)
     end
     
-    alt Action: PLAN
-        Session->>Orchestrator: Create smart plan
-        Orchestrator-->>User: Execute with minimal steps
+    alt Action: COMMAND
+        TUI->>Executor: Execute command
+        Executor-->>User: Result
+    else Action: CHAT
+        TUI->>ChatBrain: generate_response()
+        ChatBrain-->>User: Response
+    else Action: PLAN
+        TUI->>Orchestrator: execute_plan()
+        Orchestrator-->>User: Multi-step execution
     end
 ```
 
-### 3. API Key Rotation System
+### 2. Complex Task Orchestration Flow
 
 ```mermaid
 sequenceDiagram
+    participant User
+    participant Orchestrator
+    participant Planner
+    participant Memory
     participant Browser
-    participant Rotator
-    participant API1 as Gemini Key 1
-    participant API2 as Gemini Key 2
-    participant API3 as Gemini Key 3
+    participant Executor
     
-    Browser->>Rotator: Request with current key
-    Rotator->>API1: Execute task (Key 1)
+    User->>Orchestrator: "Install Postman"
+    Orchestrator->>Planner: create_plan(request)
     
-    alt Success
-        API1-->>Rotator: Result
-        Rotator->>Rotator: Mark success
-        Rotator-->>Browser: Return result
-    else Rate Limit / Quota Error
-        API1-->>Rotator: 429 Error
-        Rotator->>Rotator: Mark Key 1 exhausted
-        Rotator->>API2: Retry with Key 2
+    Planner->>Memory: Query proven plans
+    Memory-->>Planner: RAG context
+    
+    Planner->>Planner: Generate step-by-step plan
+    Planner-->>Orchestrator: [CHECK, BROWSER, TERMINAL]
+    
+    loop For each step
+        alt Step: CHECK
+            Orchestrator->>Executor: which postman
+            alt Already installed
+                Executor-->>Orchestrator: Exit code 0
+                Orchestrator-->>User: ✅ Already installed, skipping
+            else Not found
+                Executor-->>Orchestrator: Exit code 1
+                Orchestrator->>Orchestrator: Continue to next step
+            end
+        else Step: BROWSER
+            Orchestrator->>Browser: Download Postman
+            Browser-->>Orchestrator: File path
+        else Step: TERMINAL
+            Orchestrator->>Executor: Install downloaded file
+            Executor-->>Orchestrator: Success/Failure
+        end
         
-        alt Success
-            API2-->>Rotator: Result
-            Rotator-->>Browser: Return result
-        else All Keys Exhausted
-            Rotator-->>Browser: Error message
+        alt Step failed
+            Orchestrator->>Planner: reflect_and_fix(error)
+            Planner-->>Orchestrator: Fixed command
+            Orchestrator->>Executor: Retry
         end
     end
+    
+    Orchestrator->>Memory: Save successful plan
+    Orchestrator-->>User: ✅ Task complete
+```
+
+### 3. Memory System Integration
+
+```mermaid
+graph TB
+    subgraph "Input Sources"
+        UserReq[User Requests]
+        CmdResult[Command Results]
+        Plans[Successful Plans]
+        SysInfo[System Context]
+    end
+    
+    subgraph "Supermemory Storage"
+        Memory[(Supermemory<br/>Vector Database)]
+    end
+    
+    subgraph "RAG Retrieval"
+        Query[Query Memory]
+        Context[Enrich Prompts]
+    end
+    
+    subgraph "AI Components"
+        Chat[Chat Brain]
+        CmdGen[Command Generator]
+        Planner[Task Planner]
+    end
+    
+    UserReq --> Memory
+    CmdResult --> Memory
+    Plans --> Memory
+    SysInfo --> Memory
+    
+    Chat --> Query
+    CmdGen --> Query
+    Planner --> Query
+    
+    Query --> Memory
+    Memory --> Context
+    Context --> Chat
+    Context --> CmdGen
+    Context --> Planner
+    
+    style Memory fill:#95e1d3
+    style Context fill:#f9ca24
 ```
 
 ## 🔧 Component Details
@@ -218,37 +254,28 @@ sequenceDiagram
 - **`GroqClient`**: Ultra-fast inference for routing decisions
 - **`MockLLMClient`**: Fallback when no API keys configured
 
-#### `decision_engine.py` - Intelligent Intent Classification
-- **Enhanced Prompt**: Location awareness, news queries, trending data
-- **Intelligent Analysis Framework**: Data Source → Location → Quantity → Complexity
+#### `command_generator.py` - Natural Language → Shell Commands
+- Converts user requests to executable shell commands
+- Uses RAG to retrieve proven solutions from memory
+- Implements safety guidelines and idempotency principles
+
+#### `decision_engine.py` - Intent Classification
 - **Fast Path**: Regex-based heuristics for common commands
-- **Slow Path**: LLM-based intent analysis with robust examples
+- **Slow Path**: LLM-based intent analysis (JSON structured output)
 - Routes to: COMMAND, CHAT, PLAN, SEARCH, BROWSE, VIDEO
 
 #### `memory_client.py` - Supermemory Integration
-- Stores: System context, command feedback, successful plans
+- Stores: System context, command feedback, successful plans, user preferences
 - Retrieves: Relevant context for RAG-enhanced prompts
 - Enables learning from past successes/failures
 
 ### Core Systems (`src/jarvis/core/`)
 
-#### `session_manager.py` - Context & Cache Management (ENHANCED!)
-- **Smart Context Detection**: Distinguishes new requests from references
-- **Semantic Similarity**: 30% keyword overlap threshold
-- **Recent History Tracking**: 10-minute context window
-
-#### `orchestrator.py` - Multi-Step Task Execution (IMPROVED!)
-- **Intelligent Planner**: Task-type recognition (data retrieval vs downloads)
-- **Smart CHECK Logic**: Only when appropriate for static resources
-- **Minimal Plans**: One step if possible, no over-engineering
+#### `orchestrator.py` - Multi-Step Task Execution
+- **Planner**: Breaks complex requests into steps (CHECK → BROWSER → TERMINAL)
+- **Smart Resume**: Checks if files already exist before downloading
 - **Self-Healing**: Auto-fixes failed commands using LLM reflection
 - **Live UI**: Real-time progress tracking with Rich tables
-
-#### `api_key_rotator.py` - API Key Management (NEW!)
-- Automatic rotation across multiple API keys
-- Quota exhaustion detection (429, 404 errors)
-- Success/failure tracking per key
-- Configurable max retries
 
 #### `executor.py` - Safe Command Execution
 - Security checks via `SafetyCheck` module
@@ -259,16 +286,19 @@ sequenceDiagram
 #### `config_manager.py` - Configuration Management
 - Stores API keys, preferences in `~/.config/jarvis/config.json`
 - Environment variable overrides
-- Multiple API key support for rotation
-- Language preferences
+- Onboarding state tracking
+
+#### `system_detector.py` - OS Detection
+- Detects: Ubuntu, Debian, Fedora, Arch, etc.
+- Identifies package manager: apt, dnf, pacman
+- Provides system context to AI models
 
 ### Modules (`src/jarvis/modules/`)
 
-#### `browser_manager.py` - Web Automation (ENHANCED!)
-- **Local Mode**: browser-use library with Playwright
+#### `browser_manager.py` - Web Automation
+- **Local Mode**: `browser-use` library with Playwright (headless=false for live view)
 - **Cloud Mode**: BrowserUse SDK for headless execution
-- **API Key Rotation**: Automatic failover on quota errors
-- **Smart Downloads**: ~/Downloads tracking with pattern matching
+- Smart download handling (~/Downloads tracking)
 - Uses Gemini Flash for vision-based UI understanding
 
 #### `video_manager.py` - AI Video Generation
@@ -284,16 +314,16 @@ sequenceDiagram
 
 ### UI Layer (`src/jarvis/ui/`)
 
-#### `console_app.py` - Terminal User Interface (ENHANCED!)
+#### `console_app.py` - Terminal User Interface
 - **Rich Console**: Panels, tables, markdown rendering
 - **Prompt Toolkit**: Async input with syntax highlighting
-- **Session Management**: Context-aware responses
-- **Command Handlers**: `/video`, `/browse`, `/search`, etc.
+- **Decision Engine Integration**: Auto-routes commands vs chat
+- **Command Handlers**: `/video`, `/browse`, `/search`, `/install`, etc.
 
 #### `onboarding.py` - First-Run Setup
 - Collects API keys (Google, OpenRouter, Groq)
 - Configures Supermemory integration
-- Multiple key support for rotation
+- Saves to config file
 
 ## 🚀 Installation
 
@@ -332,18 +362,6 @@ sequenceDiagram
    nexus
    ```
 
-### Optional: Voice Support
-
-For voice commands, install PyAudio:
-
-```bash
-# Ubuntu/Debian
-sudo apt-get install portaudio19-dev python3-pyaudio
-
-# Then install Python dependencies
-pip install -r requirements.txt
-```
-
 ### Global Access
 
 Add to `~/.bashrc` or `~/.zshrc`:
@@ -357,7 +375,7 @@ alias nexus='/path/to/nexus/.venv/bin/nexus'
 ```bash
 nexus
 ```
-Launches the full Terminal UI with decision engine and memory support.
+Launches the full Terminal UI with decision engine, memory, and all features.
 
 ### CLI Commands
 
@@ -396,36 +414,29 @@ nexus search "best restaurants in Dubai"
 
 ## 🧪 Advanced Features
 
-### Robust Context Management
-- Semantic understanding prevents false cache matches
-- Distinguishes new requests from context references
-- Keyword-based similarity checking (30% threshold)
-- 10-minute context window for recent actions
-
-### Intelligent Task Planning
-- Data type awareness (static vs dynamic)
-- Minimal step generation
-- Appropriate use of CHECK steps
-- Focus on user's actual intent
-
-### API Key Rotation
-- Automatic failover across multiple keys
-- Quota exhaustion detection
-- Per-key success/failure tracking
-- Supports up to 4 keys per service
-
 ### Memory System
 Nexus remembers:
 - **System Context**: OS, package manager
 - **Command Feedback**: Success/failure of past commands
 - **Proven Plans**: Multi-step tasks that worked
-- **User Preferences**: Language, learned from interactions
+- **User Preferences**: Learned from interactions
+
+### Multi-Step Task Planning
+Example: "Install Postman"
+1. **CHECK**: `which postman` (idempotency)
+2. **BROWSER**: Download from official site
+3. **TERMINAL**: Extract and install
 
 ### Self-Healing Execution
 If a command fails, Nexus:
 1. Analyzes the error
 2. Asks LLM to fix the command
 3. Retries automatically
+
+### Smart Download Tracking
+- Monitors `~/Downloads` for new files
+- Filters out `.crdownload`, `.part`, `.tmp`
+- Injects filenames into subsequent commands
 
 ## 🔐 Security
 
@@ -452,29 +463,24 @@ nexus/
 │   ├── ai/                    # AI clients and intelligence
 │   │   ├── llm_client.py      # Model abstractions
 │   │   ├── command_generator.py
-│   │   ├── decision_engine.py  # Enhanced with robust logic
+│   │   ├── decision_engine.py
 │   │   └── memory_client.py
 │   ├── core/                  # Core systems
-│   │   ├── orchestrator.py    # Smart planning (IMPROVED!)
-│   │   ├── session_manager.py # Context tracking (ENHANCED!)
-│   │   ├── api_key_rotator.py # Key rotation (NEW!)
-│   │   ├── executor.py
+│   │   ├── orchestrator.py    # Multi-step execution
+│   │   ├── executor.py        # Command execution
 │   │   ├── config_manager.py
 │   │   ├── system_detector.py
 │   │   └── security.py
 │   ├── modules/               # Feature modules
-│   │   ├── browser_manager.py # With key rotation
+│   │   ├── browser_manager.py
 │   │   ├── video_manager.py
 │   │   └── package_manager.py
 │   ├── ui/                    # User interfaces
-│   │   ├── console_app.py     # TUI with multilingual
+│   │   ├── console_app.py     # TUI
 │   │   └── onboarding.py
 │   └── main.py               # CLI entry point
 ├── pyproject.toml
-├── README.md                 # This file
-├── ROBUSTNESS_FIXES.md       # Architecture improvements
-├── test_robustness_fixes.py  # Validation tests
-└── .env.example              # Environment template
+└── README.md
 ```
 
 ## 🔑 Environment Variables
@@ -482,60 +488,28 @@ nexus/
 | Variable | Purpose | Required |
 |----------|---------|----------|
 | `GOOGLE_API_KEY` | Gemini models, search | For search feature |
-| `GOOGLE_API_KEY_2`, `_3`, `_4` | Key rotation | Optional |
 | `OPENROUTER_API_KEY` | GPT models via OpenRouter | For best chat quality |
-| `GROQ_API_KEY` | Fast routing decisions | Optional (fallback) |
+| `GROQ_API_KEY` | Fast routing decisions | Optional (fallback to others) |
 | `SUPERMEMORY_API_KEY` | Memory/RAG system | Optional |
 | `BROWSER_USE_API_KEY` | Cloud browser automation | Optional |
 
-## 🧪 Testing
-
-Run robustness validation tests:
-
-```bash
-python3 test_robustness_fixes.py
-```
-
-Tests cover:
-- Session manager context detection
-- Semantic similarity matching
-- Decision engine heuristics
-- Prompt quality validation
-
 ## 🛣️ Roadmap
 
-Recent Additions:
-- ✅ API key rotation system
-- ✅ Robust context management
-- ✅ Intelligent task planning
-- ✅ Semantic similarity matching
-
-Coming Soon:
+See [plan.md](plan.md) for detailed future features:
+- ✅ Multi-brain AI architecture
+- ✅ Memory system integration
+- ✅ Browser automation
+- ✅ Video generation
 - 🔄 AppImage support
 - 🔄 .deb file installation
 - 🔄 MCP (Model Context Protocol) integration
 - 🔄 Git assistant
 - 🔄 Docker management
 - 🔄 Natural language cron jobs
-- 🔄 More language support (beyond Indic)
-
-See [plan.md](plan.md) for detailed roadmap.
-
-## 📚 Documentation
-
-- [ROBUSTNESS_FIXES.md](ROBUSTNESS_FIXES.md) - Architecture improvements & technical details
-- [TESTING_GUIDE.md](TESTING_GUIDE.md) - Testing procedures
-- [API_KEY_ROTATION_GUIDE.md](API_KEY_ROTATION_GUIDE.md) - Key rotation setup
 
 ## 🤝 Contributing
 
 Contributions are welcome! This project is actively developed.
-
-Areas for contribution:
-- Additional language support
-- New AI model integrations
-- Enhanced security features
-- Performance optimizations
 
 ## 📄 License
 

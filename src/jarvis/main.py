@@ -49,7 +49,7 @@ if not config_mgr.config.onboarding_completed:
 
 # Setup AI
 # Prioritize Groq (User Preference), then OpenRouter, then Google, then Mock
-api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY")
+api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY") 
 openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
 groq_key = config_mgr.config.groq_api_key or os.getenv("GROQ_API_KEY")
 groq_gpt_key = config_mgr.config.groq_gpt_api_key or os.getenv("GROQ_GPT_API_KEY") or groq_key
@@ -94,31 +94,19 @@ if llm_client is None:
     console.print("[dim red]Failed to initialize any AI client. Falling back to Mock Mode.[/dim red]")
     llm_client = MockLLMClient()
 
+llm_client = None
+router_client = None
 
-# Setup Browser Manager (Local) with API Key Rotation
+# Setup Browser Manager (Local)
 browser_manager = None
+# Priority: Google Gemini (best for vision) -> OpenRouter
 if api_key:  # Google API key available
-    from .core.api_key_rotator import load_keys_from_env
-    
-    # Try to load multiple keys from environment
-    try:
-        key_rotator = load_keys_from_env()
-        browser_manager = BrowserManager(
-            api_key=key_rotator,  # Pass rotator instead of single key
-            openrouter_key=openrouter_key,
-            provider="google"
-        )
-        health = key_rotator.get_health_status()
-        console.print(f"[dim blue]🌐 Browser Manager: {health['total_keys']} Google API keys loaded (rotation enabled)[/dim blue]")
-    except ValueError:
-        # Fallback to single key if no additional keys found
-        browser_manager = BrowserManager(
-            api_key=api_key,
-            openrouter_key=openrouter_key,
-            provider="google"
-        )
-        console.print("[dim blue]🌐 Browser Manager: Using single Google API key[/dim blue]")
-        
+    browser_manager = BrowserManager(
+        api_key=api_key,
+        openrouter_key=openrouter_key,
+        provider="google"  # Use Gemini for browser tasks
+    )
+    console.print("[dim blue]🌐 Browser Manager: Using Gemini 2.5 Flash[/dim blue]")
 elif openrouter_key:  # Fallback to OpenRouter
     browser_manager = BrowserManager(
         api_key="dummy",

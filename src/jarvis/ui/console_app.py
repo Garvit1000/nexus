@@ -268,14 +268,12 @@ class JarvisApp:
              """
              self.console.print(Panel(help_text, title="Help", border_style="white"))
              return True
-        
 
         else:
             self.console.print(f"[red]Unknown command: {command}[/red]")
             return False
 
     async def handle_chat(self, text: str):
-
         # --- Intelligent Decision Engine (with session awareness) ---
         decision = self.decision_engine.analyze(text)
         

@@ -4,18 +4,11 @@ from langchain_openai import ChatOpenAI
 from browser_use_sdk import BrowserUse
 import asyncio
 import os
-from typing import Optional, Union
-from ..core.api_key_rotator import APIKeyRotator
+from typing import Optional
 
 class BrowserManager:
-    def __init__(self, api_key: Union[str, APIKeyRotator], openrouter_key: Optional[str] = None, provider: str = "google"):
-        # Support both single key and rotator
-        if isinstance(api_key, APIKeyRotator):
-            self.key_rotator = api_key
-            self.api_key = api_key.get_current_key()
-        else:
-            self.key_rotator = None
-            self.api_key = api_key
+    def __init__(self, api_key: str, openrouter_key: Optional[str] = None, provider: str = "google"):
+        self.api_key = api_key
         # Initialize the model for Local Mode
         if provider == "openrouter":
              self.llm = ChatOpenAI(
@@ -128,30 +121,15 @@ class BrowserManager:
                     downloads_path=downloads_path
                 )
 
-                # Inject Intelligence Guidelines (context-aware)
-                # Only add download guidelines if task mentions downloading
-                download_keywords = ['download', 'save file', 'get file', 'fetch file']
-                is_download_task = any(keyword in task_description.lower() for keyword in download_keywords)
-                
-                if is_download_task:
-                    smart_task = (
-                        f"{task_description}\n\n"
-                        "--- ACTION GUIDELINES ---\n"
-                        "1. DOWNLOADS: Files will save to ~/Downloads. Check there.\n"
-                        "2. VERIFY: Click download buttons ONCE. Wait for completion indicators.\n"
-                        "3. NO RAGE CLICKING: If stuck, check for popups or redirects.\n"
-                        "4. EFFICIENCY: Skip if file already exists in ~/Downloads.\n"
-                    )
-                else:
-                    # For general tasks (watch, navigate, search, fill forms, etc.)
-                    smart_task = (
-                        f"{task_description}\n\n"
-                        "--- ACTION GUIDELINES ---\n"
-                        "1. BE PRECISE: Complete the user's request as stated. No more, no less.\n"
-                        "2. STOP WHEN DONE: Once the requested action succeeds, report completion.\n"
-                        "3. STAY FOCUSED: Don't add extra actions unless explicitly asked.\n"
-                        "4. VERIFY SUCCESS: Confirm the action completed before exiting.\n"
-                    )
+                # Inject Intelligence Guidelines
+                smart_task = (
+                    f"{task_description}\n\n"
+                    "--- ACTION GUIDELINES ---\n"
+                    "1. DOWNLOADS: Files will save to ~/Downloads. Check there.\n"
+                    "2. VERIFY: Click 'Download' ONCE. Wait for the file to appear or indicator to change.\n"
+                    "3. NO RAGE CLICKING: Do not repeatedly click if it seems stuck. Check for popups.\n"
+                    "4. EFFICIENCY: If the file already exists, skip downloading.\n"
+                )
 
                 # Transparency: Log the model being used
                 model_name = getattr(self.llm, 'model_name', getattr(self.llm, 'model', 'Unknown Model'))
