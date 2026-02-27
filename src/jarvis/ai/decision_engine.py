@@ -209,7 +209,7 @@ OUTPUT FORMAT (JSON ONLY):
                              "reasoning": "Raw command parsed from non-JSON output."
                          }
 
-                action = str(intent_data.get("action", "CHAT")).upper()
+                action = str(intent_data.get("action", "PLAN")).upper()
                 confidence = float(intent_data.get("confidence", 0.5))
                 reasoning = str(intent_data.get("reasoning", ""))
                 
