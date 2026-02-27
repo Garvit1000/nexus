@@ -31,14 +31,68 @@ class BrowserManager:
         if self.cloud_api_key:
             self.cloud_client = BrowserUse(api_key=self.cloud_api_key)
 
-    def run_task(self, task_description: str, use_cloud: bool = False) -> str:
+    def run_task(self, task_description: str, use_cloud: bool = False, max_retries: int = 4) -> str:
         """
-        Executes a browser-based task.
+        Executes a browser-based task with automatic key rotation.
+        
         Args:
             task_description: The task to perform.
-            use_cloud: If True, uses the BrowserUse Cloud SDK (headless). 
+            use_cloud: If True, uses the BrowserUse Cloud SDK (headless).
                        If False, uses local browser-use lib (live view).
+            max_retries: Maximum number of keys to try (default: 4)
         """
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                # Get current key if using rotator
+                if self.key_rotator:
+                    self.api_key = self.key_rotator.get_current_key()
+                    print(f"[dim]🔑 Using API key: {self.key_rotator.get_current_key_name()} (attempt {attempt + 1}/{max_retries})[/dim]")
+                    
+                    # Reinitialize LLM with new key
+                    self.llm = ChatGoogle(
+                        model="gemini-2.5-flash",
+                        api_key=self.api_key
+                    )
+                
+                result = self._execute_task(task_description, use_cloud)
+                
+                # Mark success if using rotator
+                if self.key_rotator:
+                    self.key_rotator.mark_success()
+                    print(f"[dim green]✅ Key {self.key_rotator.get_current_key_name()} succeeded[/dim green]")
+                
+                return result
+                
+            except Exception as e:
+                last_error = e
+                error_str = str(e).lower()
+                
+                # Check if it's a rate limit / quota error
+                is_quota_error = any(phrase in error_str for phrase in [
+                    '429', 'quota', 'rate limit', 'resource exhausted', '404 not_found'
+                ])
+                
+                if self.key_rotator:
+                    self.key_rotator.mark_failure(exhausted=is_quota_error)
+                    print(f"[dim red]❌ Key {self.key_rotator.get_current_key_name()} failed: {error_str[:100]}[/dim red]")
+                    
+                    # Check if all keys exhausted
+                    if self.key_rotator.all_exhausted():
+                        break
+                    
+                    # Continue to next key
+                    continue
+                else:
+                    # No rotator, just fail
+                    raise
+        
+        # All keys exhausted or max retries reached
+        return f"Error: All API keys exhausted or max retries reached. Last error: {str(last_error)}"
+    
+    def _execute_task(self, task_description: str, use_cloud: bool) -> str:
+        """Internal method to execute the actual task."""
         try:
             if use_cloud:
                 if not self.cloud_client:
@@ -92,4 +146,4 @@ class BrowserManager:
                 return history.final_result()
             
         except Exception as e:
-            return f"Error executing browser task: {str(e)}"
+            raise  # Re-raise for retry logic to handle

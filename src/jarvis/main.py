@@ -94,6 +94,8 @@ if llm_client is None:
     console.print("[dim red]Failed to initialize any AI client. Falling back to Mock Mode.[/dim red]")
     llm_client = MockLLMClient()
 
+llm_client = None
+router_client = None
 
 # Setup Browser Manager (Local)
 browser_manager = None
@@ -136,6 +138,7 @@ if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
 video_manager = VideoManager(executor, llm_client)
 
 command_generator = CommandGenerator(llm_client, sys_detector.get_info())
+
 
 @app.command()
 def chat(prompt: str):
@@ -302,6 +305,7 @@ def video(prompt: str):
         
     console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Video Output"))
 
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
@@ -319,12 +323,11 @@ def main(ctx: typer.Context):
         # existing code initialized them globally, which is fine.
         
         tui = JarvisApp(
-            llm_client=llm_client, 
-            video_manager=video_manager, 
+            llm_client=llm_client,
+            video_manager=video_manager,
             browser_manager=browser_manager,
             executor=executor,
             app_installer=app_installer,
-            router_client=router_client
         )
         
         try:

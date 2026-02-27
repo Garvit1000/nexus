@@ -69,7 +69,6 @@ class ConfigManager:
             config.groq_gpt_api_key = os.getenv("GROQ_GPT_API_KEY")
         if os.getenv("SUPERMEMORY_API_KEY"):
             config.supermemory_api_key = os.getenv("SUPERMEMORY_API_KEY")
-            
         return config
 
     def save_config(self):
