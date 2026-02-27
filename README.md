@@ -1,12 +1,10 @@
 # Nexus - AI-Powered Linux Assistant
 
-**Nexus** is an intelligent, multilingual terminal-based Linux assistant that combines multiple AI models, memory systems, and automation capabilities to help you manage your system, browse the web, generate videos, and execute complex tasks through natural language.
+**Nexus** is an intelligent, terminal-based Linux assistant that combines multiple AI models, memory systems, and automation capabilities to help you manage your system, browse the web, generate videos, and execute complex tasks through natural language.
 
 ## ✨ Key Features
 
 - 🧠 **Multi-Brain AI Architecture** - Specialized models for different tasks
-- 🌐 **Multilingual Support** - 9+ Indic languages via Sarvam.ai integration
-- 🎤 **Voice Commands** - Speech-to-text and text-to-speech
 - 🤖 **Autonomous Web Browsing** - Automated tasks with browser-use
 - 🎬 **AI Video Generation** - Create videos from text descriptions
 - 💾 **Persistent Memory** - RAG-based context retention with Supermemory
@@ -23,8 +21,7 @@ graph TB
     subgraph "User Interface Layer"
         TUI[Terminal UI<br/>Rich Console + Multilingual]
         CLI[CLI Commands<br/>Typer Framework]
-        Voice[Voice Interface<br/>Sarvam STT/TTS]
-    end
+        end
     
     subgraph "Intelligence Layer - Multi-Brain System"
         Session[Session Manager<br/>Context Tracking]
@@ -60,7 +57,6 @@ graph TB
     
     TUI --> Session
     CLI --> Session
-    Voice --> Translator
     
     Session --> Router
     Router --> Chat
@@ -95,7 +91,6 @@ graph TB
     style Orchestrator fill:#f38181
     style Browser fill:#aa96da
     style Video fill:#fcbad3
-    style Sarvam fill:#ffd93d
     style Session fill:#6c5ce7
 ```
 
@@ -112,35 +107,6 @@ Nexus uses different AI models for specialized tasks, creating an intelligent "m
 | **Browser Agent** | **Gemini Flash** (`gemini-flash-latest`) | Web automation & navigation | Vision support + fast inference for UI understanding |
 | **Video Code Generator** | **Gemini 2.5 Flash** | Generate React/Remotion code | Excellent at code generation with low latency |
 | **Search Tool** | **Gemini 2.5 Flash** | Web search with citations | Native Google Search integration |
-| **Translation Engine** | **Sarvam.ai** | Multilingual translation + speech | Native Indic language support, TTS/STT |
-
-## 🌐 Multilingual Support (NEW!)
-
-Nexus now supports **9+ Indic languages** via Sarvam.ai integration:
-
-- **Translation**: Auto-detect and translate between English and Hindi, Tamil, Telugu, Bengali, Malayalam, Kannada, Gujarati, Marathi, Punjabi
-- **Voice Commands**: Speech-to-text in your preferred language
-- **Voice Responses**: Text-to-speech output in regional languages
-- **Technical Term Preservation**: Keeps terms like "Docker", "MySQL" intact during translation
-- **Code-Mixed Support**: Handles Hinglish and similar mixed languages
-
-### Quick Multilingual Commands
-
-```bash
-# Set preferred language
-nexus lang hi-IN
-
-# Translate text
-nexus translate "नमस्ते" --to en
-
-# Voice command (Hindi)
-nexus voice --lang hi-IN --duration 5
-
-# Text-to-speech
-nexus speak "Hello" --lang ta-IN
-```
-
-See [SARVAM_INTEGRATION.md](SARVAM_INTEGRATION.md) for detailed multilingual usage.
 
 ## 🎯 Intelligent Decision Making
 
@@ -210,45 +176,6 @@ sequenceDiagram
     end
 ```
 
-### 2. Multilingual Interaction Flow
-
-```mermaid
-sequenceDiagram
-    participant User
-    participant Voice
-    participant Translator
-    participant Sarvam
-    participant Agent
-    participant MultilingualUI
-    
-    alt Voice Input
-        User->>Voice: Speak command (Hindi)
-        Voice->>Sarvam: STT (hi-IN)
-        Sarvam-->>Voice: Transcribed text
-    end
-    
-    Voice->>Translator: "सिस्टम अपडेट करो"
-    Translator->>Sarvam: Detect language
-    Sarvam-->>Translator: hi-IN detected
-    
-    Translator->>Sarvam: Translate to English
-    Sarvam-->>Translator: "Update system"
-    
-    Translator->>Agent: Execute command
-    Agent-->>Translator: Result
-    
-    Translator->>Sarvam: Translate response to hi-IN
-    Sarvam-->>Translator: Hindi response
-    
-    Translator->>MultilingualUI: Display bilingual
-    MultilingualUI-->>User: English + Hindi side-by-side
-    
-    opt Voice Output
-        MultilingualUI->>Sarvam: TTS (hi-IN)
-        Sarvam-->>User: Audio output
-    end
-```
-
 ### 3. API Key Rotation System
 
 ```mermaid
@@ -291,13 +218,6 @@ sequenceDiagram
 - **`GroqClient`**: Ultra-fast inference for routing decisions
 - **`MockLLMClient`**: Fallback when no API keys configured
 
-#### `sarvam_client.py` - Multilingual AI Client (NEW!)
-- Translation between English and 9 Indic languages
-- Speech-to-text (STT) for voice commands
-- Text-to-speech (TTS) for audio responses
-- Language detection with script analysis
-- Technical term preservation during translation
-
 #### `decision_engine.py` - Intelligent Intent Classification
 - **Enhanced Prompt**: Location awareness, news queries, trending data
 - **Intelligent Analysis Framework**: Data Source → Location → Quantity → Complexity
@@ -316,7 +236,6 @@ sequenceDiagram
 - **Smart Context Detection**: Distinguishes new requests from references
 - **Semantic Similarity**: 30% keyword overlap threshold
 - **Recent History Tracking**: 10-minute context window
-- **Bilingual Session Support**: Tracks language preferences
 
 #### `orchestrator.py` - Multi-Step Task Execution (IMPROVED!)
 - **Intelligent Planner**: Task-type recognition (data retrieval vs downloads)
@@ -345,13 +264,6 @@ sequenceDiagram
 
 ### Modules (`src/jarvis/modules/`)
 
-#### `translator.py` - Translation Orchestration (NEW!)
-- Auto-detect input language
-- Translate to/from English
-- Preserve technical terms (Docker, MySQL, etc.)
-- Handle code-mixed text (Hinglish)
-- Voice command processing pipeline
-
 #### `browser_manager.py` - Web Automation (ENHANCED!)
 - **Local Mode**: browser-use library with Playwright
 - **Cloud Mode**: BrowserUse SDK for headless execution
@@ -372,23 +284,15 @@ sequenceDiagram
 
 ### UI Layer (`src/jarvis/ui/`)
 
-#### `multilingual_ui.py` - Multilingual Display (NEW!)
-- Beautiful bilingual output (side-by-side)
-- Language-specific styling and fonts
-- Translation result panels
-- Voice status indicators
-
 #### `console_app.py` - Terminal User Interface (ENHANCED!)
 - **Rich Console**: Panels, tables, markdown rendering
 - **Prompt Toolkit**: Async input with syntax highlighting
-- **Auto-Translation**: Transparent multilingual support
 - **Session Management**: Context-aware responses
-- **Command Handlers**: `/video`, `/browse`, `/search`, `/translate`, `/voice`, etc.
+- **Command Handlers**: `/video`, `/browse`, `/search`, etc.
 
 #### `onboarding.py` - First-Run Setup
-- Collects API keys (Google, OpenRouter, Groq, Sarvam)
+- Collects API keys (Google, OpenRouter, Groq)
 - Configures Supermemory integration
-- Language preference setup
 - Multiple key support for rotation
 
 ## 🚀 Installation
@@ -453,7 +357,7 @@ alias nexus='/path/to/nexus/.venv/bin/nexus'
 ```bash
 nexus
 ```
-Launches the full Terminal UI with decision engine, memory, and multilingual support.
+Launches the full Terminal UI with decision engine and memory support.
 
 ### CLI Commands
 
@@ -490,32 +394,7 @@ nexus video "Create a 5-second countdown timer"
 nexus search "best restaurants in Dubai"
 ```
 
-#### Translation (NEW!)
-```bash
-nexus translate "नमस्ते, मैं कैसे मदद कर सकता हूं?"
-nexus translate "Hello" --to hi-IN
-```
-
-#### Voice Commands (NEW!)
-```bash
-nexus voice --lang hi-IN --duration 5
-nexus speak "नमस्ते" --lang hi-IN
-```
-
-#### Language Settings (NEW!)
-```bash
-nexus lang hi-IN       # Set Hindi
-nexus langs            # List supported languages
-```
-
 ## 🧪 Advanced Features
-
-### Multilingual Voice Assistant
-Nexus supports full voice interaction in 9+ languages:
-- Record voice commands in your language
-- Automatic transcription and translation
-- Execute commands from voice input
-- Audio responses in your preferred language
 
 ### Robust Context Management
 - Semantic understanding prevents false cache matches
@@ -572,7 +451,6 @@ nexus/
 ├── src/jarvis/
 │   ├── ai/                    # AI clients and intelligence
 │   │   ├── llm_client.py      # Model abstractions
-│   │   ├── sarvam_client.py   # Multilingual AI (NEW!)
 │   │   ├── command_generator.py
 │   │   ├── decision_engine.py  # Enhanced with robust logic
 │   │   └── memory_client.py
@@ -585,18 +463,15 @@ nexus/
 │   │   ├── system_detector.py
 │   │   └── security.py
 │   ├── modules/               # Feature modules
-│   │   ├── translator.py      # Translation module (NEW!)
 │   │   ├── browser_manager.py # With key rotation
 │   │   ├── video_manager.py
 │   │   └── package_manager.py
 │   ├── ui/                    # User interfaces
 │   │   ├── console_app.py     # TUI with multilingual
-│   │   ├── multilingual_ui.py # Bilingual display (NEW!)
 │   │   └── onboarding.py
 │   └── main.py               # CLI entry point
 ├── pyproject.toml
 ├── README.md                 # This file
-├── SARVAM_INTEGRATION.md     # Multilingual guide
 ├── ROBUSTNESS_FIXES.md       # Architecture improvements
 ├── test_robustness_fixes.py  # Validation tests
 └── .env.example              # Environment template
@@ -610,7 +485,6 @@ nexus/
 | `GOOGLE_API_KEY_2`, `_3`, `_4` | Key rotation | Optional |
 | `OPENROUTER_API_KEY` | GPT models via OpenRouter | For best chat quality |
 | `GROQ_API_KEY` | Fast routing decisions | Optional (fallback) |
-| `SARVAM_API_KEY` | Multilingual translation + speech | Optional |
 | `SUPERMEMORY_API_KEY` | Memory/RAG system | Optional |
 | `BROWSER_USE_API_KEY` | Cloud browser automation | Optional |
 
@@ -631,8 +505,6 @@ Tests cover:
 ## 🛣️ Roadmap
 
 Recent Additions:
-- ✅ Sarvam.ai multilingual integration (9+ languages)
-- ✅ Voice commands (STT/TTS)
 - ✅ API key rotation system
 - ✅ Robust context management
 - ✅ Intelligent task planning
@@ -651,7 +523,6 @@ See [plan.md](plan.md) for detailed roadmap.
 
 ## 📚 Documentation
 
-- [SARVAM_INTEGRATION.md](SARVAM_INTEGRATION.md) - Complete multilingual guide
 - [ROBUSTNESS_FIXES.md](ROBUSTNESS_FIXES.md) - Architecture improvements & technical details
 - [TESTING_GUIDE.md](TESTING_GUIDE.md) - Testing procedures
 - [API_KEY_ROTATION_GUIDE.md](API_KEY_ROTATION_GUIDE.md) - Key rotation setup
@@ -676,4 +547,4 @@ Created by Garvit (garvitjoshi543@gmail.com)
 
 ---
 
-**Nexus** - Your intelligent multilingual Linux companion, powered by multiple AI brains working in harmony.
+**Nexus** - Your intelligent Linux companion, powered by multiple AI brains working in harmony.
