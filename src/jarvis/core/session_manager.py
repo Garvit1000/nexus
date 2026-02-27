@@ -104,36 +104,66 @@ class SessionManager:
         """
         Detects if the user is referring to previous context.
         
+        Robust logic: Only match when user is CLEARLY referring to past context,
+        not when making a new request that happens to contain common words.
+        
         Examples:
-            - "now show me the posts" → True
-            - "give me them" → True
-            - "what about that?" → True
-            - "install docker" → False
+            - "show me that" → True (pronoun reference)
+            - "do it again" → True (temporal + action reference)
+            - "what about them?" → True (pronoun)
+            - "show me latest news in delhi" → False (complete new request)
+            - "install docker" → False (new request)
         """
         text_lower = user_input.lower().strip()
-        
-        # Short follow-up pattern (under 10 words, contains context keywords)
         words = text_lower.split()
-        if len(words) > 15:  # Long queries are likely new requests
+        
+        # CRITICAL FIX: Long queries with specific details are NEW requests
+        if len(words) > 10:  # Most context references are short
             return False
         
-        context_patterns = [
-            # Pronouns
-            r'\bit\b', r'\bthem\b', r'\bthose\b', r'\bthat\b', r'\bthis\b',
-            # Temporal markers
-            r'\bnow\b', r'\bjust\b', r'\bagain\b',
-            # Demonstratives
-            r'\bshow\s+me\b', r'\bgive\s+me\b', r'\bdisplay\b',
-            # Context actions
-            r'\bsame\b', r'\bprevious\b', r'\blast\b', r'\bprior\b'
-        ]
-        
         import re
-        return any(re.search(pattern, text_lower) for pattern in context_patterns)
+        
+        # Strong pronoun indicators (very likely context reference)
+        strong_pronouns = [
+            r'\bit\b', r'\bthem\b', r'\bthose\b', r'\bthat\b', r'\bthis\b'
+        ]
+        has_strong_pronoun = any(re.search(pattern, text_lower) for pattern in strong_pronouns)
+        
+        # Temporal + action combo (e.g., "now show", "again do")
+        temporal_markers = [r'\bnow\b', r'\bjust\b', r'\bagain\b']
+        has_temporal = any(re.search(pattern, text_lower) for pattern in temporal_markers)
+        
+        # Reference words
+        reference_words = [r'\bsame\b', r'\bprevious\b', r'\bprior\b']
+        has_reference = any(re.search(pattern, text_lower) for pattern in reference_words)
+        
+        # FIXED: "show me" or "give me" alone is NOT enough - need pronoun or very short query
+        action_phrases = [r'\bshow\s+me\b', r'\bgive\s+me\b', r'\bdisplay\b']
+        has_action_phrase = any(re.search(pattern, text_lower) for pattern in action_phrases)
+        
+        # Decision logic: Need STRONG evidence of context reference
+        if has_strong_pronoun:
+            return True
+        
+        # Temporal + action (e.g., "now show") with short query
+        if has_temporal and has_action_phrase and len(words) <= 5:
+            return True
+        
+        # Reference words (e.g., "same thing", "previous one")
+        if has_reference:
+            return True
+        
+        # Action phrase alone with VERY short query (2-3 words max)
+        if has_action_phrase and len(words) <= 3:
+            return True
+        
+        return False
     
     def get_context_for_decision(self, user_input: str) -> Optional[Dict[str, Any]]:
         """
         Get relevant context for the decision engine.
+        
+        Enhanced with semantic similarity check to prevent false positives.
         
         Returns context dict if user is likely referencing previous action,
         None otherwise.
@@ -143,6 +173,11 @@ class SessionManager:
         
         last_turn = self.get_last_turn(max_age_seconds=600)  # 10 min window
         if not last_turn:
+            return None
+            
+        # CRITICAL FIX: Add semantic similarity check
+        # Only return cached context if current request is semantically related to previous one
+        if not self._is_semantically_related(user_input, last_turn.user_input):
             return None
         
         return {

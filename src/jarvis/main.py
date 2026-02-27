@@ -55,6 +55,7 @@ groq_gpt_key = config_mgr.config.groq_gpt_api_key or os.getenv("GROQ_GPT_API_KEY
 
 llm_client = None
 router_client = None
+fallback_clients = []
 
 # 1. Setup Groq (Preferred Brain / Limbic System)
 # Used for DECISIONS (Router) always if available
@@ -70,31 +71,42 @@ if groq_key:
 # Priority: OpenRouter (GPT-4o/etc) -> Groq GPT (openai/gpt-oss-120b) -> Groq (Kimi) -> Google (Gemini) -> Mock
 if openrouter_key:
     llm_client = OpenRouterClient(api_key=openrouter_key)
+    fallback_clients.append(llm_client)
     console.print("[dim blue]🧠 OpenRouter (GPT) Activated for Chat[/dim blue]")
-elif groq_gpt_key:  # Fallback to Groq GPT if OpenRouter missing
+
+if groq_gpt_key:  # Fallback to Groq GPT if OpenRouter missing/fails
     try:
-        llm_client = GroqGPTClient(api_key=groq_gpt_key, model="openai/gpt-oss-120b")
-        console.print("[dim cyan]🧠 Groq GPT (openai/gpt-oss-120b) Activated for Chat (Fallback)[/dim cyan]")
+        fallback_v = GroqGPTClient(api_key=groq_gpt_key, model="openai/gpt-oss-120b")
+        if not llm_client:
+            llm_client = fallback_v
+            console.print("[dim cyan]🧠 Groq GPT (openai/gpt-oss-120b) Activated for Chat (Fallback)[/dim cyan]")
+        fallback_clients.append(fallback_v)
     except Exception as e:
         console.print(f"[dim red]Failed to init Groq GPT, using Kimi: {e}[/dim red]")
-        llm_client = router_client if router_client else None
-elif router_client:  # Fallback to Groq Kimi if Groq GPT failed
-    llm_client = router_client
-    console.print("[dim green]🧠 Kimi (Groq) Activated for Chat (Fallback)[/dim green]")
-elif api_key:
-    llm_client = GoogleGenAIClient(api_key=api_key)
-    console.print("[dim blue]🧠 Gemini Activated for Chat (Fallback)[/dim blue]")
-else:
+
+if router_client:  # Fallback to Groq Kimi if Groq GPT failed
+    if not llm_client:
+        llm_client = router_client
+        console.print("[dim green]🧠 Kimi (Groq) Activated for Chat (Fallback)[/dim green]")
+    if router_client not in fallback_clients:
+        fallback_clients.append(router_client)
+
+if api_key:
+    fallback_g = GoogleGenAIClient(api_key=api_key)
+    if not llm_client:
+        llm_client = fallback_g
+        console.print("[dim blue]🧠 Gemini Activated for Chat (Fallback)[/dim blue]")
+    fallback_clients.append(fallback_g)
+
+if not llm_client:
     llm_client = MockLLMClient()
+    fallback_clients.append(llm_client)
     console.print("[dim yellow]⚠️ Mock Mode Activated[/dim yellow]")
 
 # Final Safety Check: Ensure llm_client is not None
 if llm_client is None:
     console.print("[dim red]Failed to initialize any AI client. Falling back to Mock Mode.[/dim red]")
     llm_client = MockLLMClient()
-
-llm_client = None
-router_client = None
 
 # Setup Browser Manager (Local)
 browser_manager = None
@@ -305,6 +317,7 @@ def main(ctx: typer.Context):
             browser_manager=browser_manager,
             executor=executor,
             app_installer=app_installer,
+            fallback_clients=fallback_clients,
         )
         
         try:
