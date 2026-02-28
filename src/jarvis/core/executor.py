@@ -11,6 +11,16 @@ class CommandExecutor:
     def __init__(self, dry_run: bool = False, require_confirmation: bool = True):
         self.dry_run = dry_run
         self.require_confirmation = require_confirmation
+        self._sudo_password: Optional[str] = None
+
+    def _get_sudo_password(self) -> Optional[str]:
+        """Prompt for sudo password securely if needed."""
+        if self._sudo_password is None:
+            from rich.prompt import Prompt
+            console.print("[yellow]System administration task requires privilege escalation.[/yellow]")
+            pwd = Prompt.ask("[bold cyan]Enter sudo password[/bold cyan]", password=True)
+            self._sudo_password = pwd
+        return self._sudo_password
 
     def run(self, command: str, require_sudo: bool = False, cwd: Optional[str] = None, require_confirmation: Optional[bool] = None) -> Tuple[int, str, str]:
         """
@@ -44,7 +54,19 @@ class CommandExecutor:
             
             # Detect shell operators
             use_shell = any(op in command for op in ["&&", "||", ";", "|", ">", "<"])
+            
+            needs_sudo = command.strip().startswith("sudo")
+            if needs_sudo:
+                # Force sudo to read from stdin (-S)
+                command = command.replace("sudo ", "sudo -S ", 1)
+                sudo_pwd = self._get_sudo_password()
+                input_data = f"{sudo_pwd}\n" if sudo_pwd else None
+            else:
+                input_data = None
+
             args = command if use_shell else shlex.split(command)
+            
+            console.print(f"[bold magenta]DEBUG EXECUTOR: Running -> {args}[/bold magenta]")
             
             result = subprocess.run(
                 args,
@@ -52,9 +74,19 @@ class CommandExecutor:
                 text=True,
                 check=False,
                 cwd=cwd,
-                shell=use_shell
+                shell=use_shell,
+                input=input_data,
+                timeout=30  # Prevent indefinite hanging
             )
+            
+            # Clear password if authentication failed to allow retry next time
+            if result.returncode != 0 and ("incorrect password" in result.stderr.lower() or "sorry, try again" in result.stderr.lower()):
+                self._sudo_password = None
+                return result.returncode, result.stdout, "Sudo authentication failed. Incorrect password."
+
             return result.returncode, result.stdout, result.stderr
+        except subprocess.TimeoutExpired as e:
+            return -1, "", f"Command timed out after 30 seconds: {e}"
         except Exception as e:
             return -1, "", str(e)
 
