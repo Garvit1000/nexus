@@ -206,7 +206,34 @@ sequenceDiagram
     Orchestrator-->>User: ✅ Task complete
 ```
 
-### 3. Memory System Integration
+### 3. Self-Healing Execution Flow
+
+```mermaid
+sequenceDiagram
+    participant Orchestrator
+    participant Executor
+    participant SelfHealer as Router Brain (Groq/OpenRouter)
+    
+    Orchestrator->>Executor: Execute step command
+    Executor-->>Orchestrator: Exit Code != 0 (Failed)
+    
+    Orchestrator->>Orchestrator: Extract stdout/stderr
+    Orchestrator->>SelfHealer: reflect_and_fix(failed_command, error_output)
+    
+    Note over SelfHealer: AI acts as Senior DevOps Engineer
+    SelfHealer->>SelfHealer: Analyze why it failed (Dependency? Syntax? Timeout?)
+    
+    alt Fixable Error
+        SelfHealer-->>Orchestrator: Return raw, corrected bash command
+        Orchestrator->>Executor: Retry with corrected command
+        Executor-->>Orchestrator: Success
+    else Unfixable Error
+        SelfHealer-->>Orchestrator: Return "UNFIXABLE"
+        Orchestrator->>Orchestrator: Halt execution and fail plan
+    end
+```
+
+### 4. Memory System Integration
 
 ```mermaid
 graph TB
@@ -426,7 +453,7 @@ Example: "Install Postman"
 ### Self-Healing & Fallback Execution
 Nexus is built to gracefully handle failures at both the software and API level:
 1. **Auto-Failover LLM Routing**: If the primary AI model timeouts or hits a rate limit (429) during planning, Nexus instantly intercepts the exception and reroutes the generation request to the next available fallback model (e.g., OpenRouter → Groq).
-2. **Auto-Fix Commands**: If a terminal command fails, Nexus analyzes the `stderr`, asks the LLM to reflect and rewrite the command, and retries automatically.
+2. **Auto-Fix Commands**: If a terminal command fails (or triggers a timeout), Nexus automatically halts the Live UI, passes the `stderr/stdout` context to the LLM backend via a `reflect_and_fix` function, and asks the AI to act as a DevOps engineer to rewrite the command or install missing dependencies. The healed step is then safely retried.
 
 ### Smart Download Tracking
 - Monitors `~/Downloads` for new files
