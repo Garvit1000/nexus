@@ -1,7 +1,7 @@
 [project]
-name = "jarvis-assistant"
+name = "nexus"
 version = "0.1.0"
-description = "A Linux assistant that lives in your terminal."
+description = "An intelligent, terminal-based AI Linux assistant."
 authors = [
     {name = "garvit", email = "garvitjoshi543@gmail.com"},
 ]
@@ -30,3 +30,16 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/jarvis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]

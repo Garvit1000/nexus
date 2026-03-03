@@ -1,5 +1,7 @@
 import json
 import asyncio
+import time
+import random
 from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass
 from rich.console import Console
@@ -194,7 +196,7 @@ OUTPUT FORMAT (JSON ONLY):
 [
   {{
     "description": "Clear description of this step",
-    "action": "BROWSER" | "TERMINAL" | "CHECK" | "FILE_WRITE",
+    "action": "BROWSER" | "TERMINAL" | "CHECK" | "FILE_WRITE" | "SERVICE_MGT",
     "command": "Specific terminal command, browser instruction, or absolute file path",
     "filename_pattern": "optional_pattern_for_downloads",
     "file_content": "optional content for FILE_WRITE only",
@@ -203,12 +205,16 @@ OUTPUT FORMAT (JSON ONLY):
 ]
 """
         last_error = None
-        for client in self.llm_clients:
+        for attempt, client in enumerate(self.llm_clients):
             model_name = getattr(client, "model_name", getattr(client, "model", "Unknown Model"))
             print(f"[dim]🧠 Planner Thinking with: {model_name}[/dim]")
+            # P1: Exponential backoff with jitter between fallback attempts
+            if attempt > 0:
+                delay = (2 ** attempt) + random.random()
+                print(f"[dim yellow]⏳ Backing off {delay:.1f}s before trying {model_name}...[/dim yellow]")
+                time.sleep(delay)
             try:
                 response = client.generate_response(prompt).strip()
-                # Clean generic markdown
                 clean_response = response.replace("```json", "").replace("```", "").strip()
                 plan_data = json.loads(clean_response)
                 
@@ -490,6 +496,29 @@ class Orchestrator:
                             finally:
                                 live.start()
 
+                    elif step.action == "SERVICE_MGT":
+                        # SERVICE_MGT: Run systemctl/service command then auto-verify
+                        live.stop()
+                        try:
+                            rc, out, err = await asyncio.to_thread(self.executor.run, step.command, False, None, False)
+                            if rc == 0:
+                                # Auto-verify the service is actually active
+                                service_name = step.command.split()[-1]  # e.g. "sudo systemctl start nginx" -> "nginx"
+                                verify_cmd = f"systemctl is-active {service_name} 2>/dev/null || systemctl status {service_name} --no-pager -n 3"
+                                vrc, vout, verr = await asyncio.to_thread(self.executor.run, verify_cmd, False, None, False)
+                                step.output = vout.strip() if vrc == 0 else f"Service started but verification uncertain: {verr}"
+                                step.status = "success" if vrc == 0 else "failed"
+                                if vrc == 0:
+                                    context["last_output"] = step.output
+                            else:
+                                step.output = err if err else out
+                                step.status = "failed"
+                        except Exception as svc_e:
+                            step.output = f"SERVICE_MGT error: {svc_e}"
+                            step.status = "failed"
+                        finally:
+                            live.start()
+
                     else:
                         step.output = "Unknown Action"
                         step.status = "failed"
@@ -497,29 +526,38 @@ class Orchestrator:
                     step.output = str(e)
                     step.status = "failed"
                 
-                # --- Auto-Reflection (Self-Healing) ---
+                # --- Auto-Reflection (Self-Healing: up to 3 attempts) ---
                 if step.status == "failed":
-                    self.console.print(f"[yellow]⚠️ Step {step.id} Failed. Attempting Auto-Fix...[/yellow]")
+                    self.console.print(f"[yellow]⚠️ Step {step.id} failed. Engaging AI Self-Healer...[/yellow]")
+                    accumulated_context = f"{step.output}\n(System context: {context})"
                     
-                    # Provide context to fixer
-                    error_context = f"{step.output}\n(Context: {context})"
-                    fixed_command = await asyncio.to_thread(self.reflect_and_fix, step.command, error_context) # type: ignore
-                    if fixed_command:
-                        self.console.print(f"[bold cyan]🔄 Retrying with:[/bold cyan] {fixed_command}")
-                        step.command = fixed_command
-                        # Retry once
+                    for heal_attempt in range(1, 4):  # Up to 3 attempts
+                        fixed_command = await asyncio.to_thread(self.reflect_and_fix, step.command, accumulated_context) # type: ignore
+                        if not fixed_command:
+                            self.console.print("[dim red]🙅 AI declared UNFIXABLE. Halting.[/dim red]")
+                            break
+                        
+                        self.console.print(f"[bold cyan]🔄 Heal attempt {heal_attempt}/3 with:[/bold cyan] {fixed_command}")
                         live.stop()
                         try:
-                            if step.action in ("TERMINAL", "CHECK"):
+                            if step.action in ("TERMINAL", "CHECK", "SERVICE_MGT"):
                                 rc, out, err = await asyncio.to_thread(self.executor.run, fixed_command, False, None, False)
-                                step.output = out if rc == 0 else err
-                                step.status = "success" if rc == 0 else "failed"
-                                if rc == 0: context["last_output"] = out
+                                if rc == 0:
+                                    step.command = fixed_command
+                                    step.output = out.strip()
+                                    step.status = "success"
+                                    context["last_output"] = out
+                                    break  # Healed — stop retry loop
+                                else:
+                                    # Feed failure back for next attempt
+                                    accumulated_context += f"\n[Attempt {heal_attempt}] Fixed cmd: {fixed_command!r} also failed: {err}"
+                                    step.output = err
                             else:
-                                step.output = "Retry skipped (unsupported action)"
+                                step.output = "Retry skipped (unsupported action for healer)"
+                                break
                         except Exception as retry_e:
-                            step.output = f"Retry failed: {retry_e}"
-                            step.status = "failed"
+                            step.output = f"Heal attempt {heal_attempt} exception: {retry_e}"
+                            accumulated_context += f"\n[Attempt {heal_attempt}] Exception: {retry_e}"
                         finally:
                             live.start()
 
