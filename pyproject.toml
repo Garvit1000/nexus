@@ -5,21 +5,50 @@ description = "An intelligent, terminal-based AI Linux assistant."
 authors = [
     {name = "garvit", email = "garvitjoshi543@gmail.com"},
 ]
+
+# Core — the minimal set needed to start Nexus and run all unit tests.
+# Heavy AI/browser libs are in optional extras below.
 dependencies = [
     "typer[all]>=0.9.0",
     "rich>=13.0.0",
     "distro>=1.8.0",
-    "google-genai>=0.3.0",
-    "openai>=1.0.0",
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
+]
+requires-python = ">=3.10"
+
+[project.optional-dependencies]
+# pip install nexus[ai]  — LLM providers (needed for real use)
+ai = [
+    "google-genai>=0.3.0",
+    "openai>=1.0.0",
+    "langchain-google-genai>=0.0.1",
+    "langchain-openai>=0.0.1",
+]
+
+# pip install nexus[browser]  — browser automation (needed for /browse)
+browser = [
     "browser-use>=0.1.0",
     "browser-use-sdk>=0.0.1",
     "playwright>=1.40.0",
-    "langchain-google-genai>=0.0.1",
-    "langchain-openai>=0.0.1"
 ]
-requires-python = ">=3.10"
+
+# pip install nexus[all]  — everything (production install)
+all = [
+    "google-genai>=0.3.0",
+    "openai>=1.0.0",
+    "langchain-google-genai>=0.0.1",
+    "langchain-openai>=0.0.1",
+    "browser-use>=0.1.0",
+    "browser-use-sdk>=0.0.1",
+    "playwright>=1.40.0",
+]
+
+# pip install nexus[dev]  — unit tests only (used in CI)
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
 
 [project.scripts]
 nexus = "jarvis.main:app"
@@ -37,9 +66,3 @@ python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
 addopts = "-v --tb=short"
-
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.0",
-    "pytest-asyncio>=0.23",
-]
