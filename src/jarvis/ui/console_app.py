@@ -26,9 +26,9 @@ class JarvisApp:
         self.executor = executor
         self.app_installer = app_installer
         
-        # Session Management - NEW
-        from ..core.session_manager import SessionManager
-        self.session_manager = SessionManager(max_history=50)
+        # P1: Use persistent session so history survives restarts
+        from ..core.persistent_session_manager import PersistentSessionManager
+        self.session_manager = PersistentSessionManager(max_history=50)
         
         # Decision Engine with session awareness
         self.decision_engine = DecisionEngine(llm_client, router_client, self.session_manager)
