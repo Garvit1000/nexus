@@ -47,8 +47,12 @@ class AuditLogger:
         # Ensure the log file is private
         try:
             os.chmod(log_file, 0o600)
-        except Exception:
-            pass
+        except OSError as e:
+            import sys
+            print(
+                f"Warning: could not set secure permissions on audit log: {log_file} — {e}",
+                file=sys.stderr,
+            )
 
     def log(
         self,
