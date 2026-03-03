@@ -377,18 +377,33 @@ graph TB
    source .venv/bin/activate
    ```
 
-3. **Install package**:
+3. **Install package with all dependencies**:
    ```bash
-   pip install -e .
+   pip install -e ".[all]"
    ```
 
-4. **Configure API keys**:
+   > **What `[all]` installs:** Core TUI + AI providers (Google Gemini, OpenAI, LangChain) + browser automation (Playwright). This is what you need for full functionality.
+
+   > **Optional extras (for specific use cases):**
+   > ```bash
+   > pip install -e ".[ai]"      # Core + AI providers only (no browser)
+   > pip install -e ".[browser]" # Core + browser automation only
+   > pip install -e ".[dev]"     # Core + pytest (for running tests, no AI/browser)
+   > pip install -e "."          # Core only (TUI shell, no AI or browser)
+   > ```
+
+4. **Install Playwright browsers** (required for web automation):
+   ```bash
+   playwright install chromium
+   ```
+
+5. **Configure API keys**:
    ```bash
    cp .env.example .env
    # Edit .env and add your API keys
    ```
 
-5. **Run onboarding** (first-time only):
+6. **Run onboarding** (first-time only):
    ```bash
    nexus
    ```
