@@ -5,6 +5,7 @@ This enhancement allows session context to survive app restarts.
 """
 
 import json
+import logging
 import os
 from pathlib import Path
 from typing import Optional
@@ -67,7 +68,7 @@ class PersistentSessionManager(SessionManager):
             
             return True
         except Exception as e:
-            print(f"[dim red]Failed to save session: {e}[/dim red]")
+            logging.warning(f"Failed to save session: {e}")
             return False
     
     def restore(self) -> bool:
@@ -108,11 +109,12 @@ class PersistentSessionManager(SessionManager):
                 if turn.timestamp and turn.timestamp > cutoff
             ]
             
-            print(f"[dim]📂 Restored session: {len(self.history)} turns from last 24h[/dim]")
+            logging.info(f"Restored session: {len(self.history)} turns from last 24h")
             return True
             
         except Exception as e:
-            print(f"[dim yellow]Could not restore session: {e}[/dim yellow]")
+            logging.warning(f"Could not restore session: {e}")
+            # Session restore is best-effort
             return False
     
     def clear(self) -> None:

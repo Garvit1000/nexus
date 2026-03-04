@@ -53,7 +53,7 @@ class BrowserManager:
                 # Get current key if using rotator
                 if self.key_rotator:
                     self.api_key = self.key_rotator.get_current_key()
-                    print(f"[dim]🔑 Using API key: {self.key_rotator.get_current_key_name()} (attempt {attempt + 1}/{max_retries})[/dim]")
+                    import logging; logging.debug(f"Using key attempt {attempt + 1}/{max_retries}")
                     
                     # Reinitialize LLM with new key
                     self.llm = ChatGoogle(
@@ -66,7 +66,7 @@ class BrowserManager:
                 # Mark success if using rotator
                 if self.key_rotator:
                     self.key_rotator.mark_success()
-                    print(f"[dim green]✅ Key {self.key_rotator.get_current_key_name()} succeeded[/dim green]")
+                    import logging; logging.debug("Browser key succeeded")
                 
                 return result
                 
@@ -81,7 +81,7 @@ class BrowserManager:
                 
                 if self.key_rotator:
                     self.key_rotator.mark_failure(exhausted=is_quota_error)
-                    print(f"[dim red]❌ Key {self.key_rotator.get_current_key_name()} failed: {error_str[:100]}[/dim red]")
+                    import logging; logging.warning(f"Browser request failed: {error_str[:100]}")
                     
                     # Check if all keys exhausted
                     if self.key_rotator.all_exhausted():
@@ -135,10 +135,6 @@ class BrowserManager:
                     "3. NO RAGE CLICKING: Do not repeatedly click if it seems stuck. Check for popups.\n"
                     "4. EFFICIENCY: If the file already exists, skip downloading.\n"
                 )
-
-                # Transparency: Log the model being used
-                model_name = getattr(self.llm, 'model_name', getattr(self.llm, 'model', 'Unknown Model'))
-                print(f"\n[bold magenta]🤖 Browser Agent Thinking with: {model_name}[/bold magenta]")
 
                 agent = Agent(
                     task=smart_task,

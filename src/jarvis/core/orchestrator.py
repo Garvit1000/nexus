@@ -37,10 +37,8 @@ class Planner:
         proven_context = ""
         primary_client = self.llm_clients[0]
         if hasattr(primary_client, "memory_client") and primary_client.memory_client:
-            # Query memory explicitly for plans
             rag_hits = primary_client.memory_client.query_memory(f"planned task {request}", limit=1)
             if rag_hits:
-                print(f"[bold green]🧠 Recalled proven plan from memory![/bold green]")
                 proven_context = f"\n### PROVEN PAST PLAN (ADAPT THIS)\n{rag_hits}\n"
 
         prompt = f"""
@@ -206,12 +204,9 @@ OUTPUT FORMAT (JSON ONLY):
 """
         last_error = None
         for attempt, client in enumerate(self.llm_clients):
-            model_name = getattr(client, "model_name", getattr(client, "model", "Unknown Model"))
-            print(f"[dim]🧠 Planner Thinking with: {model_name}[/dim]")
-            # P1: Exponential backoff with jitter between fallback attempts
             if attempt > 0:
+                # Exponential backoff with jitter — shown as clean dots, no model names
                 delay = (2 ** attempt) + random.random()
-                print(f"[dim yellow]⏳ Backing off {delay:.1f}s before trying {model_name}...[/dim yellow]")
                 time.sleep(delay)
             try:
                 response = client.generate_response(prompt).strip()
@@ -231,10 +226,11 @@ OUTPUT FORMAT (JSON ONLY):
                 return steps
             except Exception as e:
                 last_error = e
-                print(f"[dim yellow]⚠️ Planner {model_name} failed: {e}. Trying fallback...[/dim yellow]")
                 continue
-                
-        print(f"[bold red]Planning failed across all available AI clients. Last error: {last_error}[/bold red]")
+
+        # All clients exhausted — log to Python logger (not the terminal UI)
+        import logging
+        logging.warning(f"Planning failed across all AI clients. Last error: {last_error}")
         return []
 
 class Orchestrator:
@@ -282,52 +278,67 @@ class Orchestrator:
         return None
 
     def generate_view(self, steps: List[TaskStep]) -> Table:
-        table = Table(title="Nexus Execution Plan", expand=True, box=None)
-        table.add_column("ID", style="dim", width=4)
-        table.add_column("Status", width=12)
-        table.add_column("Action", width=10)
-        table.add_column("Description")
-        
+        """Build the plan status table. Resize-safe: no fixed total width."""
+        table = Table(
+            title="[bold cyan]Nexus Execution Plan[/bold cyan]",
+            expand=True,   # fills terminal width, reflows on resize
+            box=None,
+            show_edge=False,
+            padding=(0, 1),
+        )
+        table.add_column("#",      style="dim",          width=3,  no_wrap=True)
+        table.add_column("Status",                        width=11, no_wrap=True)
+        table.add_column("Action",                        width=10, no_wrap=True)
+        table.add_column("Description",  ratio=1)   # takes remaining space, wraps gracefully
+
+        STATUS_MAP = {
+            "pending": ("○", "dim"),
+            "running": ("◉", "bold yellow"),
+            "success": ("✓", "bold green"),
+            "failed":  ("✗", "bold red"),
+        }
+
         for step in steps:
-            if step.status == "pending":
-                icon = "⬜"
-                style = "dim"
-            elif step.status == "running":
-                icon = "⏳"
-                style = "bold yellow"
-            elif step.status == "success":
-                icon = "✅"
-                style = "bold green"
-            else:
-                icon = "❌"
-                style = "bold red"
-                
+            icon, style = STATUS_MAP.get(step.status, ("?", "dim"))
             table.add_row(
                 str(step.id),
                 f"[{style}]{icon} {step.status.upper()}[/{style}]",
-                step.action,
-                step.description
+                f"[cyan]{step.action}[/cyan]",
+                step.description,
             )
         return table
 
     async def execute_plan(self, steps_or_request: Union[List[TaskStep], str]):
         if isinstance(steps_or_request, str):
-            steps = self.planner.create_plan(steps_or_request)
+            # Show a clean spinner while the LLM builds the plan
+            with self.console.status(
+                "[bold cyan]Building your plan…[/bold cyan]",
+                spinner="dots",
+            ):
+                steps = self.planner.create_plan(steps_or_request)
         else:
             steps = steps_or_request
 
         if not steps:
-            self.console.print("[yellow]No steps to execute.[/yellow]")
-            return
-            
-        # Display plan and ask for confirmation before executing
-        self.console.print(self.generate_view(steps))
-        from ..utils.io import confirm_action
-        if not confirm_action(f"Proceed with executing this {len(steps)}-step plan?", default=True):
-            self.console.print("[yellow]Plan cancelled by user.[/yellow]")
+            self.console.print("[yellow]⚠ Could not build a plan for that request. Try rephrasing.[/yellow]")
             return
 
-        with Live(self.generate_view(steps), refresh_per_second=4, console=self.console) as live:
+        # Show the plan table and ask for confirmation
+        self.console.print()
+        self.console.print(self.generate_view(steps))
+        self.console.print()
+        from ..utils.io import confirm_action
+        if not confirm_action(f"Proceed with executing this {len(steps)}-step plan?", default=True):
+            self.console.print("[dim]Plan cancelled.[/dim]")
+            return
+
+        with Live(
+            self.generate_view(steps),
+            refresh_per_second=6,
+            console=self.console,
+            transient=False,   # keep final state visible after Live exits
+            vertical_overflow="ellipsis",  # don't crash on very tall tables
+        ) as live:
             context: Dict[str, Any] = {"files": [], "last_output": ""} 
             success_count = 0
             # Track overall status for memory
@@ -620,7 +631,6 @@ class Orchestrator:
             # or ideally pass request down. For now use Step 1 description as proxy query.
             query_proxy = steps[0].description if steps else "Unknown Task"
             self.llm_client.memory_client.log_execution(query_proxy, steps, status, output)
-            self.console.print(f"[dim]🧠 Task logged to memory: {status}[/dim]")
 
     async def _wait_for_download(self, timeout: int = 60) -> Optional[str]:
         """Watches ~/Downloads for a new file."""

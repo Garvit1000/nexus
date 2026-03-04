@@ -13,7 +13,7 @@ class AppInstaller:
         """
         cmd = self._get_install_command(package_name)
         if not cmd:
-            print(f"Unsupported package manager: {self.sys_info.package_manager}")
+            import logging; logging.warning(f"Unsupported package manager: {self.sys_info.package_manager}")
             return False
             
         return_code, _, _ = self.executor.run(cmd, require_sudo=True)

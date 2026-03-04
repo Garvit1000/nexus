@@ -9,33 +9,37 @@ class LLMClient(ABC):
     def set_memory_client(self, client: SupermemoryClient):
         self.memory_client = client
 
-    def enrich_prompt(self, prompt: str) -> str:
-        if prompt and self.memory_client:
-            try:
-                # We use the prompt (which might be the user request) to query memory
-                # But if the prompt is a huge system instruction, this might be noisy.
-                # ideally we'd separate query from prompt. 
-                # For now, we'll assume the LLMClient caller handles clarity if needed,
-                # or we just prepend metadata.
-                
-                # Simple heuristic: If prompt is huge, maybe just use first 100 chars for query?
-                # Or trust Supermemory to handle it.
-                context = self.memory_client.query_memory(prompt[:500])
-                if context:
-                    return f"--- MEMORY CONTEXT ---\n{context}\n--- END MEMORY ---\n\n{prompt}"
-            except Exception:
-                # If memory query fails, just return prompt
-                pass
+    def enrich_prompt(self, prompt: str, skip_memory: bool = False) -> str:
+        """Prepend relevant memory context to a prompt.
+
+        Args:
+            prompt: The raw prompt text.
+            skip_memory: If True, bypass the memory query (e.g. for planner
+                         calls that already perform their own RAG step).
+        """
+        if skip_memory or not prompt or not self.memory_client:
+            return prompt
+        try:
+            context = self.memory_client.query_memory(prompt[:300])  # 300 chars is enough signal
+            if context:
+                return f"--- MEMORY CONTEXT ---\n{context}\n--- END MEMORY ---\n\n{prompt}"
+        except Exception:
+            pass
         return prompt
 
     @abstractmethod
     def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         pass
 
+    def generate_stream(self, prompt: str, model: Optional[str] = None):
+        """Yield response text in chunks as they stream from the API.
+
+        Default implementation falls back to a single-chunk yield so callers
+        can always iterate without caring whether a client supports streaming.
+        """
+        yield self.generate_response(prompt, model)
+
     def search(self, query: str) -> str:
-        """
-        Optional search method. Raises NotImplementedError if not supported.
-        """
         raise NotImplementedError("Search not supported by this provider.")
 
 
@@ -57,6 +61,16 @@ class GoogleGenAIClient(LLMClient):
             contents=effective_prompt
         )
         return response.text
+
+    def generate_stream(self, prompt: str, model: Optional[str] = None):
+        """Yield text chunks using Gemini's server-sent streaming."""
+        effective_prompt = self.enrich_prompt(prompt)
+        for chunk in self.client.models.generate_content_stream(
+            model=model or self.model,
+            contents=effective_prompt,
+        ):
+            if chunk.text:
+                yield chunk.text
 
     def search(self, query: str) -> str:
         """
@@ -134,110 +148,117 @@ class OpenRouterClient(LLMClient):
         )
         self.model = model
 
-    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
-        # Support extra_body for reasoning if needed, but keeping it simple for now
-        # akin to user example
+    def _messages(self, prompt: str) -> list:
         effective_prompt = self.enrich_prompt(prompt)
-        # Enforce System Identity properly via 'system' role
-        # This overrides the model's default "I am ChatGPT" training.
-        messages = [
+        return [
             {"role": "system", "content": (
                 "You are Nexus, an elite intelligent Linux Assistant. "
-                "You are NOT ChatGPT. You are NOT an OpenAI model. "
-                "You are a CLI tool created by Garvit. "
-                "Be helpful, precise, and favor blue/cyan aesthetics."
+                "You are NOT ChatGPT. You are a CLI tool created by Garvit. "
+                "Be helpful, precise, and concise."
             )},
-            {"role": "user", "content": f"SYSTEM: You are Nexus (created by Garvit). You are NOT ChatGPT.\n\nUser: {effective_prompt}"}
+            {"role": "user", "content": effective_prompt},
         ]
-        
+
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         response = self.client.chat.completions.create(
             model=model or self.model,
-            messages=messages,
+            messages=self._messages(prompt),
         )
         return response.choices[0].message.content or ""
 
+    def generate_stream(self, prompt: str, model: Optional[str] = None):
+        """Yield text chunks via OpenAI-compatible streaming."""
+        stream = self.client.chat.completions.create(
+            model=model or self.model,
+            messages=self._messages(prompt),
+            stream=True,
+        )
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta.content
+            if delta:
+                yield delta
+
 
 class GroqClient(LLMClient):
-    """
-    Client for Groq's high-speed inference API.
-    Perfect for the 'Router' / 'Limbic System'.
-    """
+    """Groq fast-inference client — used for the Decision Router."""
     def __init__(self, api_key: str, model: str = "moonshotai/kimi-k2-instruct-0905"):
         super().__init__()
         try:
             from groq import Groq
         except ImportError:
-            raise ImportError("Groq library not installed. Run 'pip install groq'")
-            
+            raise ImportError("Groq library not installed. Run: pip install groq")
         self.client = Groq(api_key=api_key)
         self.model = model
 
     def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
-        effective_prompt = self.enrich_prompt(prompt)
-        
-        # Groq is fast, so we can be chatty, but for reasoning we want structure.
-        # We'll just pass the prompt as user message.
-        messages = [
-            {"role": "user", "content": effective_prompt}
-        ]
-        
+        effective_prompt = self.enrich_prompt(prompt, skip_memory=True)  # router never needs memory
+        messages = [{"role": "user", "content": effective_prompt}]
         try:
             completion = self.client.chat.completions.create(
                 model=model or self.model,
                 messages=messages,
                 temperature=0.6,
                 max_completion_tokens=4096,
-                top_p=1,
-                stream=False, # We want the full decision at once for the router
-                stop=None
+                stream=False,
             )
             return completion.choices[0].message.content or ""
         except Exception as e:
-            return f"Error using Groq: {e}"
+            return f"Error: {e}"
 
 
 class GroqGPTClient(LLMClient):
-    """
-    Client for Groq's GPT models (e.g., openai/gpt-oss-120b).
-    Provides fast access to GPT models with reasoning capabilities.
-    Great fallback when OpenRouter is unavailable.
-    """
+    """Groq-hosted GPT-class model — primary chat brain."""
     def __init__(self, api_key: str, model: str = "openai/gpt-oss-120b"):
         super().__init__()
         try:
             from groq import Groq
         except ImportError:
-            raise ImportError("Groq library not installed. Run 'pip install groq'")
-            
+            raise ImportError("Groq library not installed. Run: pip install groq")
         self.client = Groq(api_key=api_key)
         self.model = model
 
-    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
+    def _messages(self, prompt: str) -> list:
         effective_prompt = self.enrich_prompt(prompt)
-        
-        # System message for identity enforcement
-        messages = [
+        return [
             {"role": "system", "content": (
                 "You are Nexus, an elite intelligent Linux Assistant. "
-                "You are NOT ChatGPT. You are NOT an OpenAI model. "
-                "You are a CLI tool created by Garvit. "
-                "Be helpful, precise, and favor blue/cyan aesthetics."
+                "You are NOT ChatGPT. You are a CLI tool created by Garvit. "
+                "Be helpful, precise, and concise."
             )},
-            {"role": "user", "content": effective_prompt}
+            {"role": "user", "content": effective_prompt},
         ]
-        
+
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
         try:
             completion = self.client.chat.completions.create(
                 model=model or self.model,
-                messages=messages,
+                messages=self._messages(prompt),
                 temperature=1,
                 max_completion_tokens=8192,
-                top_p=1,
-                # reasoning_effort="medium",  # GPT models support reasoning - commented out for safety
-                stream=False,  # Can be changed to True for streaming
-                stop=None
+                stream=False,
             )
             return completion.choices[0].message.content or ""
         except Exception as e:
-            return f"Error using Groq GPT: {e}"
+            return f"Error: {e}"
+
+    def generate_stream(self, prompt: str, model: Optional[str] = None):
+        """Yield text chunks — first token arrives in ~100ms on Groq."""
+        try:
+            stream = self.client.chat.completions.create(
+                model=model or self.model,
+                messages=self._messages(prompt),
+                temperature=1,
+                max_completion_tokens=8192,
+                stream=True,
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta.content
+                if delta:
+                    yield delta
+        except Exception as e:
+            yield f"Error: {e}"
 

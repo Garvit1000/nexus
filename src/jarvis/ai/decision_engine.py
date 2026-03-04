@@ -115,10 +115,6 @@ class DecisionEngine:
                     )
                 session_context = f"\n### RECENT CONVERSATION\n" + "\n".join(history_lines) + "\n"
 
-        # Transparency: Log model usage
-        model_name = getattr(self.llm_client, "model_name", getattr(self.llm_client, "model", "Unknown Model"))
-        print(f"[dim]🧠 Decision Engine Thinking with: {model_name}[/dim]")
-
         # --- Slow Path: LLM Analysis (LLM Reasoning) ---
         # Prefer the fast Router Client (Groq) if available, otherwise fallback to main LLM.
         active_client = self.router_client if self.router_client else self.llm_client
