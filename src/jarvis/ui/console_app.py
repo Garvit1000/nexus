@@ -263,7 +263,24 @@ class NexusApp:
     # ── Chat handler ──────────────────────────────────────────────────────────
 
     async def _handle_chat(self, text: str):
-        decision = self.decision_engine.analyze(text)
+        # ── Run decision engine + memory query in PARALLEL ───────────────────
+        # Both are network/CPU bound; running concurrently saves 300-600ms on cache-miss.
+        has_memory = hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client
+
+        async def _run_decision():
+            return await asyncio.to_thread(self.decision_engine.analyze, text)
+
+        async def _run_memory():
+            if not has_memory:
+                return ""
+            try:
+                return await asyncio.to_thread(
+                    self.llm_client.memory_client.query_memory, text
+                )
+            except Exception:
+                return ""
+
+        decision, context_str = await asyncio.gather(_run_decision(), _run_memory())
 
         # ── Cached context shortcut ───────────────────────────────────────────
         if decision.action == "SHOW_CACHED":
@@ -277,15 +294,27 @@ class NexusApp:
         # ── Dispatch on intent ────────────────────────────────────────────────
         if decision.action == "COMMAND":
             cmd_str = f"{decision.command} {decision.args}".strip() if decision.args else decision.command
-            success = await self._handle_command(cmd_str)
-            self.session_manager.add_turn(
-                user_input=text,
-                intent_action="COMMAND",
-                intent_reasoning=decision.reasoning,
-                result=f"Command: {cmd_str}",
-                success=success,
-            )
-            return
+            # Only dispatch as a Nexus slash command if it starts with '/'
+            # e.g. /install, /update, /browse — those are Nexus internals.
+            # Shell commands decided by the LLM (e.g. 'docker run ...') are NOT
+            # Nexus slash commands — fall through to PLAN so the executor runs them.
+            if cmd_str and cmd_str.startswith("/"):
+                success = await self._handle_command(cmd_str)
+                if success:
+                    self.session_manager.add_turn(
+                        user_input=text,
+                        intent_action="COMMAND",
+                        intent_reasoning=decision.reasoning,
+                        result=f"Command: {cmd_str}",
+                        success=True,
+                    )
+                    return
+                # If slash command itself failed (unknown command), fall through to PLAN
+                # and also invalidate the cache so next attempt re-routes correctly
+                if hasattr(self.decision_engine, 'invalidate_cache'):
+                    self.decision_engine.invalidate_cache()
+            # Non-slash command or failed slash → treat as PLAN so the executor handles it
+            decision.action = "PLAN"
 
         if decision.action == "PLAN":
             if not self.orchestrator:
@@ -314,16 +343,7 @@ class NexusApp:
             self.console.print(f"[{ERROR}]No AI provider configured. Set an API key in your .env file.[/{ERROR}]")
             return
 
-        # Memory retrieval (silent — no noisy «Recalling…» print)
-        context_str = ""
-        if hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client:
-            try:
-                context_str = await asyncio.to_thread(
-                    self.llm_client.memory_client.query_memory, text
-                )
-            except Exception:
-                pass  # Memory is optional; silently degrade
-
+        # context_str already fetched in parallel with the decision above
         final_prompt = text
         if context_str:
             final_prompt = f"Context from previous conversations:\n{context_str}\n\nUser: {text}"
