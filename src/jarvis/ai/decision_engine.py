@@ -214,6 +214,9 @@ User: "who is the CEO of Google?"
 User: "download the latest version of VSCode"
 → {{"action": "PLAN", "confidence": 0.92, "reasoning": "Multi-step: find download link, download, install"}}
 
+User: "now check if it is running and close it if it is"
+→ {{"action": "PLAN", "confidence": 0.95, "reasoning": "Follow-up sysadmin action requesting state check and service management"}}
+
 ### DECISION HEURISTICS
 To make your decision, ask yourself:
 1. "Is the user asking me to perform an action?" → Yes = PLAN or COMMAND.

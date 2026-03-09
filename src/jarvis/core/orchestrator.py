@@ -114,9 +114,12 @@ Break down the user's request into a bulletproof, idempotent execution plan.
    - Data retrieval (news, posts, weather) → headless: true
    - User wants to "watch", "see", "open" → headless: false
 
-4. **Minimal Steps**:
+4. **Minimal Steps & Isolation**:
+   - Each step runs in an COMPLETELY ISOLATED shell. You CANNOT set a variable in Step 1 and use it in Step 2.
+   - Wrong: Step 1: `PIDS=$(pgrep nginx)`, Step 2: `kill $PIDS` (Fails: PIDS is empty in Step 2).
+   - Right: Step 1: `sudo pkill -f nginx` (Use one-liners).
    - If one BROWSER action fulfills the request → Use ONE step.
-   - Don't add verification unless explicitly needed (like DevOps/SysAdmin tasks).
+   - Don't add verification unless explicitly needed.
 
 ### EXAMPLES (LEARN FROM THESE)
 
@@ -221,6 +224,7 @@ OUTPUT FORMAT (JSON ONLY):
                         action=step_data.get("action", ""),
                         command=step_data.get("command", ""),
                         filename_pattern=step_data.get("filename_pattern"),
+                        file_content=step_data.get("file_content"),
                         use_cloud=step_data.get("headless", False)
                     ))
                 return steps
@@ -453,7 +457,8 @@ If it cannot be fixed, return: UNFIXABLE
                             live.start()
                         
                         if return_code == 0:
-                            step.output = f"Check passed: {stdout.strip()}"
+                            passed_msg = stdout.strip() if stdout.strip() else "OK (verified without extra text)"
+                            step.output = f"Check passed: {passed_msg}"
                             step.status = "success"
                             live.update(self.generate_view(steps))
                             
