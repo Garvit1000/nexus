@@ -63,31 +63,27 @@ if groq_key:
     try:
         groq_client = GroqClient(api_key=groq_key, model="moonshotai/kimi-k2-instruct-0905")
         router_client = groq_client
-        console.print("[dim green]⚡ Groq Brain Activated (Decisions + Fallback)[/dim green]")
     except Exception as e:
-        console.print(f"[dim red]Failed to init Groq: {e}[/dim red]")
+        pass  # handled by fallback chain below
 
 # 2. Setup Chat Brain (Cortex)
 # Priority: OpenRouter (GPT-4o/etc) -> Groq GPT (openai/gpt-oss-120b) -> Groq (Kimi) -> Google (Gemini) -> Mock
 if openrouter_key:
     llm_client = OpenRouterClient(api_key=openrouter_key)
     fallback_clients.append(llm_client)
-    console.print("[dim blue]🧠 OpenRouter (GPT) Activated for Chat[/dim blue]")
 
-if groq_gpt_key:  # Fallback to Groq GPT if OpenRouter missing/fails
+if groq_gpt_key:
     try:
         fallback_v = GroqGPTClient(api_key=groq_gpt_key, model="openai/gpt-oss-120b")
         if not llm_client:
             llm_client = fallback_v
-            console.print("[dim cyan]🧠 Groq GPT (openai/gpt-oss-120b) Activated for Chat (Fallback)[/dim cyan]")
         fallback_clients.append(fallback_v)
-    except Exception as e:
-        console.print(f"[dim red]Failed to init Groq GPT, using Kimi: {e}[/dim red]")
+    except Exception:
+        pass
 
-if router_client:  # Fallback to Groq Kimi if Groq GPT failed
+if router_client:
     if not llm_client:
         llm_client = router_client
-        console.print("[dim green]🧠 Kimi (Groq) Activated for Chat (Fallback)[/dim green]")
     if router_client not in fallback_clients:
         fallback_clients.append(router_client)
 
@@ -95,56 +91,40 @@ if api_key:
     fallback_g = GoogleGenAIClient(api_key=api_key)
     if not llm_client:
         llm_client = fallback_g
-        console.print("[dim blue]🧠 Gemini Activated for Chat (Fallback)[/dim blue]")
     fallback_clients.append(fallback_g)
 
 if not llm_client:
     llm_client = MockLLMClient()
     fallback_clients.append(llm_client)
-    console.print("[dim yellow]⚠️ Mock Mode Activated[/dim yellow]")
+    console.print("[bold yellow]⚠ No API key found — running in mock mode. Add keys to .env for real AI.[/bold yellow]")
 
-# Final Safety Check: Ensure llm_client is not None
 if llm_client is None:
-    console.print("[dim red]Failed to initialize any AI client. Falling back to Mock Mode.[/dim red]")
     llm_client = MockLLMClient()
 
 # Setup Browser Manager (Local)
 browser_manager = None
-# Priority: Google Gemini (best for vision) -> OpenRouter
-if api_key:  # Google API key available
+if api_key:
     browser_manager = BrowserManager(
         api_key=api_key,
         openrouter_key=openrouter_key,
-        provider="google"  # Use Gemini for browser tasks
+        provider="google"
     )
-    console.print("[dim blue]🌐 Browser Manager: Using Gemini 2.5 Flash[/dim blue]")
-elif openrouter_key:  # Fallback to OpenRouter
+elif openrouter_key:
     browser_manager = BrowserManager(
         api_key="dummy",
         openrouter_key=openrouter_key,
         provider="openrouter"
     )
-    console.print("[dim cyan]🌐 Browser Manager: Using OpenRouter (Fallback)[/dim cyan]")
 
 # Setup Memory (if enabled)
 if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
-
     memory_client = SupermemoryClient(api_key=config_mgr.config.supermemory_api_key)
     llm_client.set_memory_client(memory_client)
-    
-    # --- Brain Initialization: Persist System Context ---
-    # This ensures the agent "knows" what machine it is running on.
     info = sys_detector.get_info()
     sys_context = f"My System: OS={info.os_name} {info.os_version}, Package Manager={info.package_manager.value}"
-    
-    # Check if we already know this to avoid duplicate memories on restart
     existing_memories = memory_client.query_memory(sys_context)
     if sys_context not in existing_memories:
-        console.print(f"[dim]🧠 Memorizing system context: {sys_context}[/dim]")
         memory_client.add_memory(sys_context, metadata={"type": "system_info"})
-    else:
-        # console.print("[dim]🧠 System context already known.[/dim]")
-        pass
 
 command_generator = CommandGenerator(llm_client, sys_detector.get_info())
 

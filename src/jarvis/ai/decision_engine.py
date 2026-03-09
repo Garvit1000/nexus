@@ -1,6 +1,9 @@
 from dataclasses import dataclass
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import re
+import time
+import hashlib
+from threading import Lock
 
 @dataclass
 class Intent:
@@ -16,31 +19,76 @@ class DecisionEngine:
     The 'Brain' of Nexus.
     Analyzes user input to decide the best course of action.
     Uses a mix of heuristic rules (fast) and LLM reasoning (smart).
-    
-    Enhanced with:
-    - Session context awareness
-    - Memory integration for better decisions
-    - Few-shot learning examples
-    """
-    
-    def __init__(self, llm_client=None, router_client=None, session_manager=None):
-        self.llm_client = llm_client
-        self.router_client = router_client
-        self.session_manager = session_manager
 
-    def analyze(self, user_input: str) -> Intent:
+    Speed features:
+    - Fast heuristic regex path (always tried first, <1ms)
+    - LRU intent cache: identical/normalised queries skip the LLM entirely
+    - Cache entries expire after CACHE_TTL seconds so context stays fresh
+    """
+
+    CACHE_SIZE = 256   # max distinct entries
+    CACHE_TTL  = 300   # seconds (5 min)
+
+    def __init__(self, llm_client=None, router_client=None, session_manager=None):
+        self.llm_client     = llm_client
+        self.router_client  = router_client
+        self.session_manager = session_manager
+        # {cache_key: (Intent, timestamp)}
+        self._cache: Dict[str, Tuple["Intent", float]] = {}
+        self._cache_lock = Lock()
+        self._cache_hits = 0
+        self._cache_misses = 0
+
+    def _cache_key(self, text: str) -> str:
+        """Normalised cache key — case-insensitive, whitespace-collapsed."""
+        normalised = " ".join(text.lower().split())
+        return hashlib.md5(normalised.encode(), usedforsecurity=False).hexdigest()
+
+    def _get_cached(self, key: str) -> Optional["Intent"]:
+        with self._cache_lock:
+            entry = self._cache.get(key)
+            if entry and (time.monotonic() - entry[1]) < self.CACHE_TTL:
+                self._cache_hits += 1
+                return entry[0]
+            if entry:                       # expired
+                del self._cache[key]
+        return None
+
+    def _set_cached(self, key: str, intent: "Intent") -> None:
+        with self._cache_lock:
+            # Evict oldest entry when full
+            if len(self._cache) >= self.CACHE_SIZE:
+                oldest = min(self._cache, key=lambda k: self._cache[k][1])
+                del self._cache[oldest]
+            self._cache[key] = (intent, time.monotonic())
+            self._cache_misses += 1
+
+    def get_cache_stats(self) -> Dict[str, int]:
+        with self._cache_lock:
+            return {
+                "hits": self._cache_hits,
+                "misses": self._cache_misses,
+                "size": len(self._cache),
+            }
+
+    def invalidate_cache(self) -> None:
+        """Clear the intent cache (e.g. when session resets)."""
+        with self._cache_lock:
+            self._cache.clear()
+
+    def analyze(self, user_input: str) -> "Intent":
         """
         Decide what to do with the user input.
-        
-        Enhanced with session context and memory integration.
+        Fast path: regex heuristics + LRU cache.
+        Slow path: LLM router (only on cache miss for ambiguous inputs).
         """
         text = user_input.strip().lower()
 
         # --- Context Check: Is user referencing previous action? ---
+        # NOTE: session-context intents are NOT cached (they depend on live state)
         if self.session_manager:
             context = self.session_manager.get_context_for_decision(user_input)
             if context and context.get('last_result'):
-                # User is asking about previous action
                 return Intent(
                     action="SHOW_CACHED",
                     confidence=0.98,
@@ -48,8 +96,14 @@ class DecisionEngine:
                     cached_result=context['last_result']
                 )
 
+        # --- Cache check (before touching any LLM) ---
+        cache_key = self._cache_key(user_input)
+        cached = self._get_cached(cache_key)
+        if cached is not None:
+            return cached
+
         # --- Fast Path: Heuristics ---
-        
+
         # 1. System Update
         if text in ["update", "update system", "upgrade system", "update my pc", "upgrade packages", "update all"]:
             return Intent(
@@ -115,10 +169,6 @@ class DecisionEngine:
                     )
                 session_context = f"\n### RECENT CONVERSATION\n" + "\n".join(history_lines) + "\n"
 
-        # Transparency: Log model usage
-        model_name = getattr(self.llm_client, "model_name", getattr(self.llm_client, "model", "Unknown Model"))
-        print(f"[dim]🧠 Decision Engine Thinking with: {model_name}[/dim]")
-
         # --- Slow Path: LLM Analysis (LLM Reasoning) ---
         # Prefer the fast Router Client (Groq) if available, otherwise fallback to main LLM.
         active_client = self.router_client if self.router_client else self.llm_client
@@ -163,6 +213,9 @@ User: "who is the CEO of Google?"
 
 User: "download the latest version of VSCode"
 → {{"action": "PLAN", "confidence": 0.92, "reasoning": "Multi-step: find download link, download, install"}}
+
+User: "now check if it is running and close it if it is"
+→ {{"action": "PLAN", "confidence": 0.95, "reasoning": "Follow-up sysadmin action requesting state check and service management"}}
 
 ### DECISION HEURISTICS
 To make your decision, ask yourself:
@@ -222,16 +275,18 @@ OUTPUT FORMAT (JSON ONLY):
                      cmd = parts[0]
                      args = parts[1] if len(parts) > 1 else ""
 
-                return Intent(
+                result = Intent(
                     action=action,
                     command=cmd,
                     args=args,
                     confidence=confidence,
                     reasoning=reasoning
                 )
+                # Cache the LLM result so next identical query is instant
+                self._set_cached(cache_key, result)
+                return result
 
-            except Exception as e:
-                # If LLM logic fails completely
+            except Exception:
                 pass
 
 
