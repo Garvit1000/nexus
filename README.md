@@ -16,7 +16,7 @@
 Nexus follows a modular, multi-brain architecture where different AI models handle specialized tasks:
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000"}}}%%
+%%{init: {"themeVariables": {"fontFamily": "monospace"}}}%%
 graph TB
     classDef default fill:#fff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
     classDef highlight fill:#ffe600,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
@@ -95,7 +95,7 @@ Nexus uses different AI models for different purposes, creating a specialized "m
 Nexus implements a robust failover chain for critical components to ensure maximum uptime, seamlessly bypassing API rate limits (e.g. 429 errors from free-tier models).
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000"}}}%%
+%%{init: {"themeVariables": {"fontFamily": "monospace"}}}%%
 graph LR
     classDef default fill:#fff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
     classDef highlight fill:#ffe600,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
@@ -125,7 +125,7 @@ graph LR
 ### 1. User Input Processing Flow
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000", "actorBkg": "#fff", "actorBorder": "#000", "actorTextColor": "#000", "signalColor": "#000", "signalTextColor": "#000", "noteBkg": "#ffe600", "noteBorderColor": "#000", "noteTextColor": "#000", "activationBorderColor": "#000", "activationBkgColor": "#ff4949"}}}%%
+%%{init: {"themeVariables": {"fontFamily": "monospace", "actorBkg": "#fff", "actorBorder": "#333", "actorTextColor": "#333", "noteBkg": "#ffe600", "noteBorderColor": "#333", "noteTextColor": "#333", "activationBorderColor": "#333", "activationBkgColor": "#ff4949"}}}%%
 sequenceDiagram
     participant User
     participant TUI
@@ -162,7 +162,7 @@ sequenceDiagram
 ### 2. Complex Task Orchestration Flow
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000", "actorBkg": "#fff", "actorBorder": "#000", "actorTextColor": "#000", "signalColor": "#000", "signalTextColor": "#000", "noteBkg": "#ffe600", "noteBorderColor": "#000", "noteTextColor": "#000", "activationBorderColor": "#000", "activationBkgColor": "#ff4949"}}}%%
+%%{init: {"themeVariables": {"fontFamily": "monospace", "actorBkg": "#fff", "actorBorder": "#333", "actorTextColor": "#333", "noteBkg": "#ffe600", "noteBorderColor": "#333", "noteTextColor": "#333", "activationBorderColor": "#333", "activationBkgColor": "#ff4949"}}}%%
 sequenceDiagram
     participant User
     participant Orchestrator
@@ -214,7 +214,7 @@ sequenceDiagram
 Nexus employs a resilient two-stage self-healing system that attempts to recover failing commands up to 3 times before safely halting to prevent system corruption.
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000", "actorBkg": "#fff", "actorBorder": "#000", "actorTextColor": "#000", "signalColor": "#000", "signalTextColor": "#000", "noteBkg": "#ffe600", "noteBorderColor": "#000", "noteTextColor": "#000", "activationBorderColor": "#000", "activationBkgColor": "#ff4949"}}}%%
+%%{init: {"themeVariables": {"fontFamily": "monospace", "actorBkg": "#fff", "actorBorder": "#333", "actorTextColor": "#333", "noteBkg": "#ffe600", "noteBorderColor": "#333", "noteTextColor": "#333", "activationBorderColor": "#333", "activationBkgColor": "#ff4949"}}}%%
 sequenceDiagram
     participant Orchestrator
     participant Executor
@@ -259,7 +259,7 @@ Nexus isn't just a chatbot; it runs in **completely isolated environments** util
 ### 4. Memory System Integration
 
 ```mermaid
-%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000"}}}%%
+%%{init: {"themeVariables": {"fontFamily": "monospace"}}}%%
 graph TB
     classDef default fill:#fff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
     classDef highlight fill:#ffe600,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
