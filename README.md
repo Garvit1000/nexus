@@ -2,88 +2,88 @@
 
 **Nexus** is an intelligent, terminal-based Linux assistant that combines multiple AI models, memory systems, and automation capabilities to help you manage your system, browse the web, generate videos, and execute complex tasks through natural language.
 
-## ✨ Key Features
+## Key Features
 
-- 🧠 **Multi-Brain AI Architecture** - Specialized models for different tasks
-- 🤖 **Autonomous Web Browsing** - Automated tasks with browser-use
-- 💾 **Persistent Memory** - RAG-based context retention with Supermemory
-- 🔄 **Self-Healing Execution** - Auto-fix failed commands and auto-failover LLM routing
-- 🎯 **Intelligent Intent Recognition** - Context-aware decision making
-- 🔐 **Security First** - AST-based defensive command validation and user confirmation
+- **Multi-Brain AI Architecture** - Specialized models for different tasks
+- **Autonomous Web Browsing** - Automated tasks with browser-use
+- **Persistent Memory** - RAG-based context retention with Supermemory
+- **Self-Healing Execution** - Auto-fix failed commands and auto-failover LLM routing
+- **Intelligent Intent Recognition** - Context-aware decision making
+- **Security First** - AST-based defensive command validation and user confirmation
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 Nexus follows a modular, multi-brain architecture where different AI models handle specialized tasks:
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000"}}}%%
 graph TB
+    classDef default fill:#fff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef highlight fill:#ffe600,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef secondary fill:#ff4949,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef tertiary fill:#49baff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef purple fill:#c77ae8,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
     subgraph "User Interface Layer"
         TUI[Terminal UI<br/>Rich Console + Prompt Toolkit]
         CLI[CLI Commands<br/>Typer Framework]
     end
-    
+
     subgraph "Intelligence Layer - Multi-Brain System"
-        Router[Decision Engine<br/>Groq: Kimi K2]
-        Chat[Chat Brain<br/>OpenRouter: GPT / Groq: Kimi]
-        Planner[Task Planner<br/>Primary LLM Client]
-        CmdGen[Command Generator<br/>Primary LLM Client]
+        Router[Decision Engine<br/>Groq: Kimi K2]:::secondary
+        Chat[Chat Brain<br/>OpenRouter: GPT / Groq: Kimi]:::tertiary
+        Planner[Task Planner<br/>Primary LLM Client]:::tertiary
+        CmdGen[Command Generator<br/>Primary LLM Client]:::tertiary
     end
-    
+
     subgraph "Memory System"
-        Memory[Supermemory<br/>RAG + Context Storage]
+        Memory[Supermemory<br/>RAG + Context Storage]:::highlight
     end
-    
+
     subgraph "Execution Layer"
-        Orchestrator[Orchestrator<br/>Multi-Step Task Execution]
+        Orchestrator[Orchestrator<br/>Multi-Step Task Execution]:::purple
         Executor[Command Executor<br/>Safety Checks + Confirmation]
-        Browser[Browser Manager<br/>browser-use + API Key Rotation]
+        Browser[Browser Manager<br/>browser-use + API Key Rotation]:::purple
         Package[Package Manager<br/>apt/dnf/pacman]
     end
-    
+
     subgraph "Core Services"
         Config[Config Manager<br/>~/.config/jarvis]
         System[System Detector<br/>OS + Package Manager]
         Security[Security Module<br/>Command Validation]
     end
-    
+
     TUI --> Router
     CLI --> Router
     Router --> Chat
     Router --> Planner
     Router --> CmdGen
-    
+
     Chat --> Memory
     Planner --> Memory
     CmdGen --> Memory
-    
+
     Planner --> Orchestrator
     CmdGen --> Executor
-    
+
     Orchestrator --> Browser
     Orchestrator --> Executor
-    
+
     Executor --> Security
     Browser --> Executor
     Package --> Executor
-    
+
     Config --> System
     System --> Package
-    
-    style Router fill:#ff6b6b
-    style Chat fill:#4ecdc4
-    style Memory fill:#95e1d3
-    style Orchestrator fill:#f38181
-    style Browser fill:#aa96da
-    style Session fill:#6c5ce7
+
 ```
 
-## 🧠 AI Model Usage Map
+## AI Model Usage Map
 
 Nexus uses different AI models for different purposes, creating a specialized "multi-brain" system:
 
 | Component | Model Used | Purpose | Why This Model? |
 |-----------|------------|---------|-----------------|
-| **Router / Decision Engine** | **Groq: Kimi K2** (`moonshotai/kimi-k2-instruct-0905`) | Fast intent classification & routing | Ultra-fast inference (⚡ Groq), robust decision framework |
+| **Router / Decision Engine** | **Groq: Kimi K2** (`moonshotai/kimi-k2-instruct-0905`) | Fast intent classification & routing | Ultra-fast inference (Groq), robust decision framework |
 | **Chat Brain** | **OpenRouter: GPT** (default) or **Groq: Kimi** | Natural language conversations | Best reasoning & context understanding |
 | **Command Generator** | Primary LLM Client | Convert natural language → shell commands | Strong code generation capabilities |
 | **Task Planner** | Primary LLM Client | Break complex tasks into steps | Strategic thinking & planning with smart CHECK logic |
@@ -95,35 +95,37 @@ Nexus uses different AI models for different purposes, creating a specialized "m
 Nexus implements a robust failover chain for critical components to ensure maximum uptime, seamlessly bypassing API rate limits (e.g. 429 errors from free-tier models).
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000"}}}%%
 graph LR
+    classDef default fill:#fff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef highlight fill:#ffe600,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef secondary fill:#ff4949,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef tertiary fill:#49baff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef purple fill:#c77ae8,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
     subgraph "Decision/Router Brain"
-        R1[Groq: Kimi K2] --> R2[Fallback to Chat Brain]
+        R1[Groq: Kimi K2]:::secondary --> R2[Fallback to Chat Brain]
     end
-    
+
     subgraph "Chat & Planner Priority (Auto-Failover)"
-        C1[OpenRouter: GPT] --> C2[Groq: Kimi] --> C3[Google: Gemini] --> C4[Mock Mode]
+        C1[OpenRouter: GPT]:::tertiary --> C2[Groq: Kimi] --> C3[Google: Gemini] --> C4[Mock Mode]
     end
-    
+
     subgraph "Specialized Tasks"
-        S1[Browser: Gemini Flash]
-        S2[Video: Gemini 2.5 Flash]
-        S3[Search: Gemini 2.5 Flash]
+        S1[Browser: Gemini Flash]:::purple
+        S2[Video: Gemini 2.5 Flash]:::highlight
+        S3[Search: Gemini 2.5 Flash]:::tertiary
     end
-    
+
     R2 --> C1
-    
-    style R1 fill:#ff6b6b
-    style C1 fill:#4ecdc4
-    style S1 fill:#aa96da
-    style S2 fill:#fcbad3
-    style S3 fill:#95e1d3
+
 ```
 
-## 📊 System Flow Diagrams
+## System Flow Diagrams
 
 ### 1. User Input Processing Flow
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000", "actorBkg": "#fff", "actorBorder": "#000", "actorTextColor": "#000", "signalColor": "#000", "signalTextColor": "#000", "noteBkg": "#ffe600", "noteBorderColor": "#000", "noteTextColor": "#000", "activationBorderColor": "#000", "activationBkgColor": "#ff4949"}}}%%
 sequenceDiagram
     participant User
     participant TUI
@@ -132,10 +134,10 @@ sequenceDiagram
     participant ChatBrain
     participant Orchestrator
     participant Executor
-    
+
     User->>TUI: Input text
     TUI->>DecisionEngine: analyze(input)
-    
+
     alt Fast Path: Heuristic Match
         DecisionEngine->>DecisionEngine: Regex patterns<br/>(install, remove, update)
         DecisionEngine-->>TUI: Intent(COMMAND)
@@ -144,7 +146,7 @@ sequenceDiagram
         Router-->>DecisionEngine: JSON response
         DecisionEngine-->>TUI: Intent(COMMAND/CHAT/PLAN)
     end
-    
+
     alt Action: COMMAND
         TUI->>Executor: Execute command
         Executor-->>User: Result
@@ -160,6 +162,7 @@ sequenceDiagram
 ### 2. Complex Task Orchestration Flow
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000", "actorBkg": "#fff", "actorBorder": "#000", "actorTextColor": "#000", "signalColor": "#000", "signalTextColor": "#000", "noteBkg": "#ffe600", "noteBorderColor": "#000", "noteTextColor": "#000", "activationBorderColor": "#000", "activationBkgColor": "#ff4949"}}}%%
 sequenceDiagram
     participant User
     participant Orchestrator
@@ -167,22 +170,22 @@ sequenceDiagram
     participant Memory
     participant Browser
     participant Executor
-    
+
     User->>Orchestrator: "Install Postman"
     Orchestrator->>Planner: create_plan(request)
-    
+
     Planner->>Memory: Query proven plans
     Memory-->>Planner: RAG context
-    
+
     Planner->>Planner: Generate step-by-step plan
     Planner-->>Orchestrator: [CHECK, BROWSER, TERMINAL]
-    
+
     loop For each step
         alt Step: CHECK
             Orchestrator->>Executor: which postman
             alt Already installed
                 Executor-->>Orchestrator: Exit code 0
-                Orchestrator-->>User: ✅ Already installed, skipping
+                Orchestrator-->>User: Already installed, skipping
             else Not found
                 Executor-->>Orchestrator: Exit code 1
                 Orchestrator->>Orchestrator: Continue to next step
@@ -194,91 +197,115 @@ sequenceDiagram
             Orchestrator->>Executor: Install downloaded file
             Executor-->>Orchestrator: Success/Failure
         end
-        
+
         alt Step failed
             Orchestrator->>Planner: reflect_and_fix(error)
             Planner-->>Orchestrator: Fixed command
             Orchestrator->>Executor: Retry
         end
     end
-    
+
     Orchestrator->>Memory: Save successful plan
-    Orchestrator-->>User: ✅ Task complete
+    Orchestrator-->>User: Task complete
 ```
 
-### 3. Self-Healing Execution Flow
+### 3. Dual-Stage Self-Healing Execution Flow
+
+Nexus employs a resilient two-stage self-healing system that attempts to recover failing commands up to 3 times before safely halting to prevent system corruption.
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000", "actorBkg": "#fff", "actorBorder": "#000", "actorTextColor": "#000", "signalColor": "#000", "signalTextColor": "#000", "noteBkg": "#ffe600", "noteBorderColor": "#000", "noteTextColor": "#000", "activationBorderColor": "#000", "activationBkgColor": "#ff4949"}}}%%
 sequenceDiagram
     participant Orchestrator
     participant Executor
-    participant SelfHealer as Router Brain (Groq/OpenRouter)
-    
-    Orchestrator->>Executor: Execute step command
+    participant LocalHealer as Local Heuristic Matcher
+    participant LLMHealer as LLM Self-Healer (Groq/OpenRouter)
+
+    Orchestrator->>Executor: Execute step
     Executor-->>Orchestrator: Exit Code != 0 (Failed)
-    
-    Orchestrator->>Orchestrator: Extract stdout/stderr
-    Orchestrator->>SelfHealer: reflect_and_fix(failed_command, error_output)
-    
-    Note over SelfHealer: AI acts as Senior DevOps Engineer
-    SelfHealer->>SelfHealer: Analyze why it failed (Dependency? Syntax? Timeout?)
-    
-    alt Fixable Error
-        SelfHealer-->>Orchestrator: Return raw, corrected bash command
-        Orchestrator->>Executor: Retry with corrected command
-        Executor-->>Orchestrator: Success
-    else Unfixable Error
-        SelfHealer-->>Orchestrator: Return "UNFIXABLE"
-        Orchestrator->>Orchestrator: Halt execution and fail plan
+
+    %% Stage 1
+    Orchestrator->>LocalHealer: Check for common errors (e.g. "command not found")
+    alt Is "command not found"?
+        LocalHealer-->>Orchestrator: Return fast auto-install command (e.g., apt install docker.io)
+    else Complex Error
+        %% Stage 2
+        Orchestrator->>LLMHealer: reflect_and_fix(failed_command, error_output)
+        Note over LLMHealer: Analyzes context as Senior DevOps
+
+        alt Fixable Error
+            LLMHealer-->>Orchestrator: Return raw, corrected bash command
+        else Unfixable/Dangerous
+            LLMHealer-->>Orchestrator: Return "UNFIXABLE"
+        end
+    end
+
+    alt Got Fix
+        Orchestrator->>Executor: Retry with corrected command (max 3 times)
+        Executor-->>Orchestrator: Success or Failure
+    else "UNFIXABLE" or Max Retries Hit
+        Orchestrator->>Orchestrator: Halt execution safely to protect system state
     end
 ```
+
+### True Capacity: The DevOps & Sysadmin Engine
+
+Nexus isn't just a chatbot; it runs in **completely isolated environments** utilizing powerful, one-liner sysadmin tools.
+
+*   **Docker Mastery:** Ask Nexus to *"keep docker tidy"* or *"kill all exited containers"*. It understands how to pipe `docker ps -q` to `docker rm` and uses `pkill` reliably.
+*   **Service Management (`SERVICE_MGT`):** When interacting with systemd/services (e.g. *"restart nginx"*), Nexus executes the restart and then *automatically* runs `systemctl status` in the background to ensure it didn't crash on boot—skipping to self-healing if the check fails.
+*   **Safe Failure:** If self-healing a step fails 3 times, **Nexus deliberately stops execution**. It refuses to stumble blindly into the next step of a plan if the preceding requirements weren't met, preserving the integrity of your Linux system.
 
 ### 4. Memory System Integration
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "monospace", "lineColor": "#000"}}}%%
 graph TB
+    classDef default fill:#fff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef highlight fill:#ffe600,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef secondary fill:#ff4949,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef tertiary fill:#49baff,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
+    classDef purple fill:#c77ae8,stroke:#000,stroke-width:3px,color:#000,font-weight:bold;
     subgraph "Input Sources"
         UserReq[User Requests]
         CmdResult[Command Results]
         Plans[Successful Plans]
         SysInfo[System Context]
     end
-    
+
     subgraph "Supermemory Storage"
-        Memory[(Supermemory<br/>Vector Database)]
+        Memory[(Supermemory<br/>Vector Database)]:::highlight
     end
-    
+
     subgraph "RAG Retrieval"
-        Query[Query Memory]
-        Context[Enrich Prompts]
+        Query[Query Memory]:::highlight
+        Context[Enrich Prompts]:::highlight
     end
-    
+
     subgraph "AI Components"
         Chat[Chat Brain]
         CmdGen[Command Generator]
         Planner[Task Planner]
     end
-    
+
     UserReq --> Memory
     CmdResult --> Memory
     Plans --> Memory
     SysInfo --> Memory
-    
+
     Chat --> Query
     CmdGen --> Query
     Planner --> Query
-    
+
     Query --> Memory
     Memory --> Context
     Context --> Chat
     Context --> CmdGen
     Context --> Planner
-    
-    style Memory fill:#95e1d3
-    style Context fill:#f9ca24
+
 ```
 
-## 🔧 Component Details
+## Component Details
 
 ### AI Clients (`src/jarvis/ai/`)
 
@@ -357,7 +384,7 @@ graph TB
 - Configures Supermemory integration
 - Saves to config file
 
-## 🚀 Installation
+## Installation
 
 ### Prerequisites
 - Python 3.10 or higher
@@ -366,21 +393,21 @@ graph TB
 ### Setup
 
 1. **Clone the repository**:
-   ```bash
+```bash
    git clone <repository-url>
    cd nexus
-   ```
+```
 
 2. **Create virtual environment**:
-   ```bash
+```bash
    python3 -m venv .venv
    source .venv/bin/activate
-   ```
+```
 
 3. **Install package with all dependencies**:
-   ```bash
+```bash
    pip install -e ".[all]"
-   ```
+```
 
    > **What `[all]` installs:** Core TUI + AI providers (Google Gemini, OpenAI, LangChain) + browser automation (Playwright). This is what you need for full functionality.
 
@@ -393,20 +420,20 @@ graph TB
    > ```
 
 4. **Install Playwright browsers** (required for web automation):
-   ```bash
+```bash
    playwright install chromium
-   ```
+```
 
 5. **Configure API keys**:
-   ```bash
+```bash
    cp .env.example .env
    # Edit .env and add your API keys
-   ```
+```
 
 6. **Run onboarding** (first-time only):
-   ```bash
+```bash
    nexus
-   ```
+```
 
 ### Global Access
 
@@ -415,7 +442,7 @@ Add to `~/.bashrc` or `~/.zshrc`:
 alias nexus='/path/to/nexus/.venv/bin/nexus'
 ```
 
-## 📖 Usage
+## Usage
 
 ### Interactive Mode (TUI)
 ```bash
@@ -453,7 +480,7 @@ nexus browse --cloud "Download latest Chrome .deb"
 nexus search "best restaurants in Dubai"
 ```
 
-## 🧪 Testing
+## Testing
 
 Nexus ships with **61 automated pytest tests** covering every critical code path. Run them anytime:
 
@@ -547,7 +574,7 @@ Tests run automatically on every push via GitHub Actions (`.github/workflows/ci.
 - Python **3.10**, **3.11**, **3.12** (matrix build)
 - Branches: `main`, `mvp`
 
-## 🧪 Advanced Features
+## Advanced Features
 
 ### Memory System
 Nexus remembers:
@@ -573,7 +600,7 @@ Nexus is built to gracefully handle failures at both the software and API level:
 - Filters out `.crdownload`, `.part`, `.tmp`
 - Injects filenames into subsequent commands
 
-## 🔐 Security
+## Security
 
 ### Threat Model — What Nexus Defends Against
 
@@ -605,7 +632,7 @@ export JARVIS_DRY_RUN=1
 ~/.nexus/session.json
 ```
 
-## 📁 Project Structure
+## Project Structure
 
 ```
 nexus/
@@ -618,9 +645,9 @@ nexus/
 │   ├── core/                    # Core systems
 │   │   ├── orchestrator.py      # Multi-step execution + self-healing
 │   │   ├── executor.py          # Command execution + audit + secure sudo
-│   │   ├── audit_logger.py      # Persistent tamper-evident command log ✨ NEW
+│   │   ├── audit_logger.py      # Persistent tamper-evident command log NEW
 │   │   ├── session_manager.py   # In-memory session state
-│   │   ├── persistent_session_manager.py  # Disk-persisted sessions ✨ WIRED
+│   │   ├── persistent_session_manager.py  # Disk-persisted sessions WIRED
 │   │   ├── config_manager.py
 │   │   ├── system_detector.py
 │   │   └── security.py          # AST validation + pattern blacklist
@@ -631,12 +658,12 @@ nexus/
 │   │   ├── console_app.py       # TUI (uses PersistentSessionManager)
 │   │   └── onboarding.py
 │   └── main.py                  # CLI entry point
-├── FUTURE_SCOPE.md              # P2/P3 planned features ✨ NEW
+├── FUTURE_SCOPE.md              # P2/P3 planned features NEW
 ├── pyproject.toml
 └── README.md
 ```
 
-## 🔑 Environment Variables
+## Environment Variables
 
 | Variable | Purpose | Required |
 |----------|---------|----------|
@@ -646,34 +673,34 @@ nexus/
 | `SUPERMEMORY_API_KEY` | Memory/RAG system | Optional |
 | `BROWSER_USE_API_KEY` | Cloud browser automation | Optional |
 
-## 🛣️ Roadmap
+## Roadmap
 
 See [FUTURE_SCOPE.md](FUTURE_SCOPE.md) for detailed planned features:
-- ✅ Multi-brain AI architecture
-- ✅ Memory system integration (Supermemory RAG)
-- ✅ Browser automation with API key rotation
-- ✅ Self-healing execution (3-attempt AI loop)
-- ✅ Exponential backoff on LLM failover
-- ✅ SERVICE_MGT action with auto-verify
-- ✅ Persistent session (survives restarts)
-- ✅ Audit log (`~/.nexus/audit.log`)
-- ✅ Secure sudo memory (bytearray zero-wipe)
-- 🔄 AppImage / `.deb` installation pipeline
-- 🔄 MCP (Model Context Protocol) integration
-- 🔄 Git assistant (natural language git)
-- 🔄 Docker management mode
-- 🔄 Natural language cron jobs
-- 🔄 Multi-step rollback
+- Multi-brain AI architecture
+- Memory system integration (Supermemory RAG)
+- Browser automation with API key rotation
+- Self-healing execution (3-attempt AI loop)
+- Exponential backoff on LLM failover
+- SERVICE_MGT action with auto-verify
+- Persistent session (survives restarts)
+- Audit log (`~/.nexus/audit.log`)
+- Secure sudo memory (bytearray zero-wipe)
+- AppImage / `.deb` installation pipeline
+- MCP (Model Context Protocol) integration
+- Git assistant (natural language git)
+- Docker management mode
+- Natural language cron jobs
+- Multi-step rollback
 
-## 🤝 Contributing
+## Contributing
 
 Contributions are welcome! This project is actively developed.
 
-## 📄 License
+## License
 
 [Add your license here]
 
-## 👤 Author
+## Author
 
 Created by Garvit (garvitjoshi543@gmail.com)
 

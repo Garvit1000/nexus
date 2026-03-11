@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 import re
 import time
 import hashlib
@@ -7,12 +7,13 @@ from threading import Lock
 
 @dataclass
 class Intent:
-    action: str  # COMMAND, CHAT, SEARCH, BROWSE, PLAN, SHOW_CACHED
+    action: str  # COMMAND, CHAT, SEARCH, BROWSE, PLAN, SHOW_CACHED, CLARIFY
     command: Optional[str] = None
     args: Optional[str] = None
     confidence: float = 0.0
     reasoning: str = ""
     cached_result: Optional[str] = None  # For SHOW_CACHED action
+    clarification_options: Optional[List[str]] = None # For CLARIFY action
 
 class DecisionEngine:
     """
@@ -228,15 +229,17 @@ To make your decision, ask yourself:
 - If the user says "Show me X", "Get X", "Display X", "Give me X", "Fetch X" → ALWAYS choose PLAN, NEVER CHAT.
 - If the user asks for "posts", "data", "results", "list", "top 10", "latest" → PLAN (they want live data).
 - NEVER return a script/code in CHAT unless explicitly asked "write a script" or "show me the code".
-- When in doubt: Choose PLAN over CHAT (it's better to attempt action than just talk).
+- When in doubt between PLAN and CHAT: Choose PLAN (it's better to attempt action than just talk).
 - If user says "now X" or references "it/them/that" → They likely want follow-up action on previous task.
+- AMBIGUITY TRIGGER: If the user's request is extremely vague, unspecific, or you are guessing their intent (confidence < 0.70), YOU MUST set action to "CLARIFY" and provide 2-3 multiple choice options in "clarification_options".
 
 OUTPUT FORMAT (JSON ONLY):
 {{
-  "action": "PLAN" | "COMMAND" | "CHAT" | "SEARCH",
+  "action": "PLAN" | "COMMAND" | "CHAT" | "SEARCH" | "CLARIFY",
   "command": "/command args" (only if action is COMMAND),
   "confidence": <float 0.0-1.0>,
-  "reasoning": "<brief explanation>"
+  "reasoning": "<explanation>",
+  "clarification_options": ["Option 1?", "Option 2?", "Something else?"] (ONLY if action is CLARIFY)
 }}
 """
             try:
@@ -265,6 +268,12 @@ OUTPUT FORMAT (JSON ONLY):
                 action = str(intent_data.get("action", "PLAN")).upper()
                 confidence = float(intent_data.get("confidence", 0.5))
                 reasoning = str(intent_data.get("reasoning", ""))
+                clarification_options = intent_data.get("clarification_options", None)
+                
+                # Enforce CLARIFY for low confidence
+                if confidence < 0.70 and action != "CLARIFY":
+                    action = "CLARIFY"
+                    clarification_options = ["Could you provide more details?", "Are you looking to view system state?", "Something else?"]
                 
                 command_str = str(intent_data.get("command", "")) if intent_data.get("command") else ""
                 cmd = None
@@ -280,7 +289,8 @@ OUTPUT FORMAT (JSON ONLY):
                     command=cmd,
                     args=args,
                     confidence=confidence,
-                    reasoning=reasoning
+                    reasoning=reasoning,
+                    clarification_options=clarification_options
                 )
                 # Cache the LLM result so next identical query is instant
                 self._set_cached(cache_key, result)

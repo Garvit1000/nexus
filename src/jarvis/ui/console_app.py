@@ -292,6 +292,23 @@ class NexusApp:
             return
 
         # ── Dispatch on intent ────────────────────────────────────────────────
+        if decision.action == "CLARIFY":
+            self.console.print(f"[{WARN}]🤔 I'm not sure what you mean. Did you mean:[/{WARN}]")
+            if decision.clarification_options:
+                for i, opt in enumerate(decision.clarification_options, 1):
+                    self.console.print(f"  {i}. {opt}")
+            else:
+                 self.console.print("  1. Something else?")
+                 
+            self.session_manager.add_turn(
+                user_input=text,
+                intent_action="CLARIFY",
+                intent_reasoning=decision.reasoning,
+                result="Clarified intent",
+                success=True,
+            )
+            return
+
         if decision.action == "COMMAND":
             cmd_str = f"{decision.command} {decision.args}".strip() if decision.args else decision.command
             # Only dispatch as a Nexus slash command if it starts with '/'
