@@ -343,7 +343,15 @@ class NexusApp:
                     self.llm_client,
                     fallback_clients=self.fallback_clients,
                 )
-            result = await self.orchestrator.execute_plan(text)
+            # Pass recent conversation context to Execute plan so it doesn't hallucinate "last request"
+            recent_context = ""
+            if self.session_manager:
+                recent_history = self.session_manager.get_recent_history(limit=3)
+                if recent_history:
+                    history_text = "\n".join([f"Previous user request: {t['user_input']}" for t in recent_history])
+                    recent_context = f"Context from previous turns:\n{history_text}\n"
+
+            result = await self.orchestrator.execute_plan(text, context_str=recent_context)
             self.session_manager.add_turn(
                 user_input=text,
                 intent_action="PLAN",

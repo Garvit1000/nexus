@@ -1,6 +1,6 @@
 # Nexus - AI-Powered Linux Assistant
 
-**Nexus** is an intelligent, terminal-based Linux assistant that combines multiple AI models, memory systems, and automation capabilities to help you manage your system, browse the web, generate videos, and execute complex tasks through natural language.
+**Nexus** is an intelligent, terminal-based Linux assistant that combines multiple AI models, memory systems, and automation capabilities to help you manage your system, browse the web, and execute complex tasks through natural language.
 
 ## Key Features
 
@@ -10,6 +10,7 @@
 - **Self-Healing Execution** - Auto-fix failed commands and auto-failover LLM routing
 - **Intelligent Intent Recognition** - Context-aware decision making
 - **Security First** - AST-based defensive command validation and user confirmation
+- **Ephemeral Azure Sandboxing** - User-controlled cloud sandbox for running untrusted or risky commands safely
 
 ## Architecture Overview
 
@@ -247,6 +248,45 @@ sequenceDiagram
         Orchestrator->>Orchestrator: Halt execution safely to protect system state
     end
 ```
+
+### 3.5 Ephemeral Azure Sandboxing (`AZURE_RUN`)
+
+Nexus includes an **interactive, user-controlled cloud sandbox** powered by Azure Container Instances. Instead of silently routing commands to the cloud, Nexus flags commands that *could* fetch or execute external code and gives you an explicit choice.
+
+**Trigger keywords:** `git clone`, `wget`, `curl`, `bash -c`, `sh -c`, `tar -x`, `make install`, `./configure`
+
+**What you see when a flagged command is about to run:**
+
+```
+⚠️  Security Alert: This command fetches or compiles external code.
+Command: git clone https://github.com/some-repo.git
+
+Do you want to securely sandbox this in Azure instead of running it locally? (y/N):
+```
+
+- **Enter (No)** → Runs directly on your local machine as normal. Use this for trusted repos like every day.
+- **`y` (Yes)** → Nexus hot-swaps the action to `AZURE_RUN`:
+
+```mermaid
+%%{init: {"themeVariables": {"fontFamily": "monospace", "actorBkg": "#fff", "actorBorder": "#333", "actorTextColor": "#333", "noteBkg": "#ffe600", "noteBorderColor": "#333", "noteTextColor": "#333", "activationBorderColor": "#333", "activationBkgColor": "#ff4949"}}}%%
+sequenceDiagram
+    participant User
+    participant Nexus
+    participant Azure as Azure Container Instances
+
+    Nexus->>User: Security Alert prompt (y/N)
+    User->>Nexus: y (sandbox it)
+    Nexus->>Azure: Create Ubuntu 22.04 container
+    Azure-->>Nexus: Container provisioned
+    Nexus->>Azure: apt-get install git curl wget build-essential python3 nodejs cmake...
+    Nexus->>Azure: Run user command inside container
+    Azure-->>Nexus: Stream stdout/stderr logs in real time
+    Nexus-->>User: Display output
+    Nexus->>Azure: Delete container (permanent)
+    Note over Azure: Container nuked. Your laptop untouched.
+```
+
+**Design principle:** Nexus does not decide if something is "sketchy" for you. It acts as a firewall checkpoint — you stay in control.
 
 ### True Capacity: The DevOps & Sysadmin Engine
 

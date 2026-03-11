@@ -16,7 +16,7 @@ from .security import SafetyCheck
 class TaskStep:
     id: int
     description: str
-    action: str # BROWSER, TERMINAL, LLM
+    action: str # BROWSER, TERMINAL, LLM, AZURE_RUN
     command: str
     filename_pattern: Optional[str] = None # For Smart Resume (checking existing downloads)
     file_content: Optional[str] = None # For FILE_WRITE operations
@@ -32,7 +32,7 @@ class Planner:
                 if client not in self.llm_clients:
                     self.llm_clients.append(client)
 
-    def create_plan(self, request: str) -> List[TaskStep]:
+    def create_plan(self, request: str, context_str: str = "") -> List[TaskStep]:
         # --- RAG: Retrieve Proven Plans ---
         proven_context = ""
         primary_client = self.llm_clients[0]
@@ -52,6 +52,7 @@ Break down the user's request into a bulletproof, idempotent execution plan.
 {proven_context}
 
 ### REQUEST
+{context_str}
 "{request}"
 
 ### AVAILABLE ACTIONS
@@ -63,11 +64,15 @@ Break down the user's request into a bulletproof, idempotent execution plan.
 2. **TERMINAL**: For shell commands (system operations, service management)
    - Use for `apt install`, `systemctl restart`, `docker run`, etc.
 
-3. **CHECK**: For verifying if a SPECIFIC FILE, CLI TOOL, or STATE exists
+3. **AZURE_RUN**: For executing untrusted / heavy scripts in a disposable Azure Cloud Sandbox.
+   - Command should be the bash string to run inside the cloud container.
+   - Example: `"command": "git clone myrepo && cd myrepo && npm test"` 
+
+4. **CHECK**: For verifying if a SPECIFIC FILE, CLI TOOL, or STATE exists
    - VERY IMPORTANT: Use to verify dependencies (e.g., `which nginx`) before attempting to use them.
    - Use for state validation (e.g., `systemctl is-active nginx`).
 
-4. **FILE_WRITE**: For safely creating or overwriting configuration files.
+5. **FILE_WRITE**: For safely creating or overwriting configuration files.
    - Requires `"command": "/absolute/path/to/file"`
    - Requires `"file_content": "multiline string data"`
 
@@ -118,8 +123,7 @@ Break down the user's request into a bulletproof, idempotent execution plan.
    - Each step runs in an COMPLETELY ISOLATED shell. You CANNOT set a variable in Step 1 and use it in Step 2.
    - Wrong: Step 1: `PIDS=$(pgrep nginx)`, Step 2: `kill $PIDS` (Fails: PIDS is empty in Step 2).
    - Right: Step 1: `sudo pkill -f nginx` (Use one-liners).
-   - If one BROWSER action fulfills the request → Use ONE step.
-   - Don't add verification unless explicitly needed.
+   - If one BROWSER or AZURE_RUN action fulfills the request → Use ONE step.
 
 ### EXAMPLES (LEARN FROM THESE)
 
@@ -182,23 +186,12 @@ Plan:
   }}
 ]
 
-Request: "open youtube and play lofi music"
-Plan:
-[
-  {{
-    "description": "Open YouTube and play lofi music",
-    "action": "BROWSER",
-    "command": "Navigate to youtube.com, search for 'lofi music', and play the first result",
-    "headless": false
-  }}
-]
-
 OUTPUT FORMAT (JSON ONLY):
 [
   {{
     "description": "Clear description of this step",
-    "action": "BROWSER" | "TERMINAL" | "CHECK" | "FILE_WRITE" | "SERVICE_MGT",
-    "command": "Specific terminal command, browser instruction, or absolute file path",
+    "action": "BROWSER" | "TERMINAL" | "CHECK" | "FILE_WRITE" | "SERVICE_MGT" | "AZURE_RUN",
+    "command": "Specific terminal command, browser instruction, absolute file path, or script for Azure",
     "filename_pattern": "optional_pattern_for_downloads",
     "file_content": "optional content for FILE_WRITE only",
     "headless": true | false
@@ -392,14 +385,14 @@ If it cannot be fixed, return: UNFIXABLE
             )
         return table
 
-    async def execute_plan(self, steps_or_request: Union[List[TaskStep], str]):
+    async def execute_plan(self, steps_or_request: Union[List[TaskStep], str], context_str: str = ""):
         if isinstance(steps_or_request, str):
             # Show a clean spinner while the LLM builds the plan
             with self.console.status(
                 "[bold cyan]Building your plan…[/bold cyan]",
                 spinner="dots",
             ):
-                steps = self.planner.create_plan(steps_or_request)
+                steps = self.planner.create_plan(steps_or_request, context_str)
         else:
             steps = steps_or_request
 
@@ -448,6 +441,25 @@ If it cannot be fixed, return: UNFIXABLE
                 
                 # Execute based on action
                 try:
+                    # Smart Interactive Sandbox Prompt
+                    if step.action == "TERMINAL":
+                        sketchy_keywords = ["wget ", "curl ", "git clone", "make install", "./configure", "tar -x", "bash -c", "sh -c"]
+                        is_sketchy = any(kw in step.command.lower() for kw in sketchy_keywords)
+                        # Don't trigger on safe sysadmin tasks
+                        is_safe_sysadmin = step.command.strip().startswith(("apt", "sudo apt", "systemctl", "sudo systemctl", "echo", "mkdir", "cd", "ls"))
+                        
+                        if is_sketchy and not is_safe_sysadmin:
+                            live.stop()
+                            from rich.prompt import Confirm
+                            self.console.print(f"\n[bold yellow]⚠️  Security Alert[/bold yellow]: This command fetches or compiles external code.")
+                            self.console.print(f"[cyan]Command: {step.command.strip()}[/cyan]")
+                            if Confirm.ask(
+                                "[bold green]Do you want to securely sandbox this in Azure instead of running it locally?[/bold green]",
+                                default=False
+                            ):
+                                step.action = "AZURE_RUN"
+                            live.start()
+
                     if step.action == "CHECK":
                         # Execute the Check Command
                         live.stop()
@@ -592,6 +604,65 @@ If it cannot be fixed, return: UNFIXABLE
                             finally:
                                 live.start()
 
+                    elif step.action == "AZURE_RUN":
+                        # Execute in a disposable Azure Container Instance
+                        import secrets
+                        import shlex
+                        import subprocess
+                        container_name = f"nexus-sandbox-{secrets.token_hex(4)}"
+                        safe_cmd = step.command.replace('"', '\\"')
+                        
+                        live.stop()
+                        try:
+                            # 1. Provision Sandbox
+                            self.console.print(f"[dim]Provisioning Azure Sandbox ({container_name})...[/dim]")
+                            create_cmd = [
+                                "az", "container", "create", 
+                                "--resource-group", "NexusSandboxRG", 
+                                "--name", container_name,
+                                "--image", "ubuntu:22.04", 
+                                "--os-type", "Linux", 
+                                "--cpu", "1", 
+                                "--memory", "1",
+                                "--restart-policy", "Never", 
+                                "--command-line", f'/bin/bash -c "apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3 pip nodejs npm cmake && {safe_cmd}"'
+                            ]
+                            # Bypassing self.executor.run and using shell=False to avoid heuristic traps and complex escaping
+                            process = await asyncio.to_thread(
+                                subprocess.run, create_cmd, capture_output=True, text=True, shell=False
+                            )
+                            return_code, stdout, stderr = process.returncode, process.stdout, process.stderr
+                            
+                            if return_code == 0:
+                                # 2. Fetch logs
+                                self.console.print(f"[dim]Streaming sandbox execution logs...[/dim]")
+                                logs_cmd = [
+                                    "az", "container", "logs", 
+                                    "--resource-group", "NexusSandboxRG", 
+                                    "--name", container_name, 
+                                    "--follow"
+                                ]
+                                logs_process = await asyncio.to_thread(
+                                    subprocess.run, logs_cmd, capture_output=True, text=True, shell=False
+                                )
+                                rc, logs_out = logs_process.returncode, logs_process.stdout
+                                step.output = logs_out.strip() if logs_out.strip() else "Process exited silently."
+                                step.status = "success" if rc == 0 else "failed"
+                            else:
+                                step.output = f"Azure Sandbox Provisioning Error (RC={return_code}): {stderr if stderr else stdout}"
+                                step.status = "failed"
+                        finally:
+                            # 3. Always clean up
+                            self.console.print(f"[dim]Destroying Azure Sandbox...[/dim]")
+                            delete_cmd = [
+                                "az", "container", "delete", 
+                                "--resource-group", "NexusSandboxRG", 
+                                "--name", container_name, 
+                                "--yes"
+                            ]
+                            await asyncio.to_thread(subprocess.run, delete_cmd, capture_output=True, shell=False)
+                            live.start()
+
                     elif step.action == "SERVICE_MGT":
                         # SERVICE_MGT: Run systemctl/service command then auto-verify
                         live.stop()
@@ -658,6 +729,69 @@ If it cannot be fixed, return: UNFIXABLE
                                     break  # Healed — stop retry loop
                                 else:
                                     # Feed failure back for next attempt
+                                    accumulated_context += f"\n[Attempt {heal_attempt}] Fixed cmd: {fixed_command!r} also failed: {err}"
+                                    step.output = err
+                            elif step.action == "AZURE_RUN":
+                                import secrets
+                                import subprocess
+                                import shlex
+                                container_name = f"nexus-sandbox-heal-{secrets.token_hex(4)}"
+                                safe_cmd = fixed_command.replace('"', '\\"')
+                                
+                                create_cmd = [
+                                    "az", "container", "create", 
+                                    "--resource-group", "NexusSandboxRG", 
+                                    "--name", container_name,
+                                    "--image", "ubuntu:22.04", 
+                                    "--os-type", "Linux", 
+                                    "--cpu", "1", 
+                                    "--memory", "1",
+                                    "--restart-policy", "Never", 
+                                    "--command-line", f'/bin/bash -c "apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3 pip nodejs npm cmake && {safe_cmd}"'
+                                ]
+                                process = await asyncio.to_thread(
+                                    subprocess.run, create_cmd, capture_output=True, text=True, shell=False
+                                )
+                                
+                                if process.returncode == 0:
+                                    logs_cmd = [
+                                        "az", "container", "logs", 
+                                        "--resource-group", "NexusSandboxRG", 
+                                        "--name", container_name, 
+                                        "--follow"
+                                    ]
+                                    logs_process = await asyncio.to_thread(
+                                        subprocess.run, logs_cmd, capture_output=True, text=True, shell=False
+                                    )
+                                    # Clean up before checking results
+                                    delete_cmd = [
+                                        "az", "container", "delete", 
+                                        "--resource-group", "NexusSandboxRG", 
+                                        "--name", container_name, 
+                                        "--yes"
+                                    ]
+                                    await asyncio.to_thread(subprocess.run, delete_cmd, capture_output=True, shell=False)
+                                    
+                                    if logs_process.returncode == 0:
+                                        step.command = fixed_command
+                                        step.output = logs_process.stdout.strip() if logs_process.stdout.strip() else "Process exited silently."
+                                        step.status = "success"
+                                        break
+                                    else:
+                                        err = logs_process.stderr if logs_process.stderr else logs_process.stdout
+                                        accumulated_context += f"\n[Attempt {heal_attempt}] Fixed cmd: {fixed_command!r} log fetch failed: {err}"
+                                        step.output = err
+                                else:
+                                    # Clean up failed container just in case
+                                    delete_cmd = [
+                                        "az", "container", "delete", 
+                                        "--resource-group", "NexusSandboxRG", 
+                                        "--name", container_name, 
+                                        "--yes"
+                                    ]
+                                    await asyncio.to_thread(subprocess.run, delete_cmd, capture_output=True, shell=False)
+                                    
+                                    err = f"Azure Sandbox Provisioning Error: {process.stderr if process.stderr else process.stdout}"
                                     accumulated_context += f"\n[Attempt {heal_attempt}] Fixed cmd: {fixed_command!r} also failed: {err}"
                                     step.output = err
                             else:

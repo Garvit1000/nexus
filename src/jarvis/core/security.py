@@ -235,6 +235,12 @@ class SafetyCheck:
         
         if first_word in privileged_commands:
             return True
+            
+        # Cloud CLIs manage their own authentication and MUST NOT be run with sudo,
+        # otherwise they lose the local user's ~/.azure/ credential cache.
+        if first_word in ["az", "aws", "gcloud"]:
+            return False
+
         # Check for writes to system directories
         if " /etc/" in command or " /usr/" in command or " /var/" in command:
              return True
