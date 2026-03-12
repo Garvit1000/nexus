@@ -14,5 +14,7 @@ supermemory>=3.23.0
 groq>=0.9.0
 pyfiglet>=0.8.post1
 prompt_toolkit>=3.0.0
+requests>=2.31.0
+google-generativeai>=0.3.0
 
 # Audio and Translation Dependencies (Removed)

@@ -97,3 +97,24 @@ Nexus can browse the internet like a human using `browser-use` and Gemini Flash 
 - Navigate websites, fill forms, extract data, and click buttons.
 - Used automatically when Nexus determines a task requires live web interaction that a simple search can't answer.
 - Supports API key rotation for rate-limit resilience.
+
+## 8. Azure Sandbox
+
+🚀 1. Provisioning Lifecycle
+Unique Identity: Nexus generates a random container ID (e.g., nexus-sandbox-a1b2c3d4) to ensure no overlaps.
+Environment Isolation: It uses Azure Container Instances (ACI) to spin up a fresh Ubuntu 22.04 image. To ensure reliability, it pulls from Microsoft’s local mirror (mcr.microsoft.com) rather than public Docker Hub to avoid rate limits.
+Hardware Allocation: The sandbox is allocated 1 CPU core and 1.5 GB of RAM, providing enough power for building or testing software without bloat.
+📦 2. Pre-Installed Development Stack
+Before your command even runs, Nexus executes a "Prime and Prep" script that installs a full development toolchain. This ensures that most developer tasks (cloning, building, installing dependencies) work out of the box.
+
+The following tools are installed via apt-get:
+
+Version Control: git (to clone and manage repos).
+Network Tools: curl and wget (to download files/scripts).
+C/C++ Build Tools: build-essential (which includes gcc, g++, and make) plus cmake.
+Python Ecosystem: python3-pip and python3-venv (to run Python scripts or install requirements).
+Web Ecosystem: nodejs and npm (for JS/TS projects).
+🛠️ 3. Execution & Destruction
+Live Injection: Once the environment is primed, your specific command is executed. Nexus streams the logs live to your terminal as if it were running locally.
+Self-Healing: If the command fails inside the sandbox, the Auto-Healer triggers, reflects on the error, and tries up to 3 times to fix the command within that same isolated context.
+Automatic Cleanup: Regardless of whether the task succeeded or failed, Nexus immediately sends a delete signal to Azure to destroy the container. Nothing persists, ensuring no malware or temporary files ever touch your host machine

@@ -35,13 +35,9 @@ class SupermemoryClient:
         Args:
             query: The search query
             limit: Maximum number of results to return
-            time_decay: If True, prioritize recent memories
+            time_decay: If True, prioritize recent memories (Logic handled by engine if possible)
         """
         try:
-            # Add temporal bias to query if enabled
-            if time_decay:
-                query = f"recent {query}"
-            
             # SDK usage: client.search.execute(q=...)
             response = self.client.search.execute(q=query)
             

@@ -17,10 +17,23 @@ class LLMClient(ABC):
             skip_memory: If True, bypass the memory query (e.g. for planner
                          calls that already perform their own RAG step).
         """
+        # 1. Quick exits
         if skip_memory or not prompt or not self.memory_client:
             return prompt
+            
+        # 2. Avoid double-enrichment (e.g. if console_app already added context)
+        if "--- MEMORY CONTEXT ---" in prompt:
+            return prompt
+
         try:
-            context = self.memory_client.query_memory(prompt[:300])  # 300 chars is enough signal
+            # 3. Query memory with the pure user signal
+            # Extract just the user text if it's already been mixed with something else
+            query_signal = prompt
+            if "User: " in prompt and "\nNexus: " in prompt:
+                # Handle history-enriched prompts if needed
+                query_signal = prompt.split("User: ")[-1]
+            
+            context = self.memory_client.query_memory(query_signal[:500])
             if context:
                 return f"--- MEMORY CONTEXT ---\n{context}\n--- END MEMORY ---\n\n{prompt}"
         except Exception:
@@ -205,7 +218,8 @@ class GroqClient(LLMClient):
             )
             return completion.choices[0].message.content or ""
         except Exception as e:
-            return f"Error: {e}"
+            # Propagate exception so fallback can catch it
+            raise e
 
 
 class GroqGPTClient(LLMClient):
@@ -241,7 +255,7 @@ class GroqGPTClient(LLMClient):
             )
             return completion.choices[0].message.content or ""
         except Exception as e:
-            return f"Error: {e}"
+            raise e
 
     def generate_stream(self, prompt: str, model: Optional[str] = None):
         """Yield text chunks — first token arrives in ~100ms on Groq."""
@@ -260,5 +274,5 @@ class GroqGPTClient(LLMClient):
                 if delta:
                     yield delta
         except Exception as e:
-            yield f"Error: {e}"
+            raise e
 

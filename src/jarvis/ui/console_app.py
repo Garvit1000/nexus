@@ -11,9 +11,11 @@ Design principles:
 
 import asyncio
 import sys
-from typing import Optional
+import inspect
+from typing import Optional, TYPE_CHECKING, List, Dict, Any, Tuple, cast
 
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.rule import Rule
@@ -24,7 +26,10 @@ from prompt_toolkit import PromptSession, HTML
 from prompt_toolkit.styles import Style as PromptStyle
 from prompt_toolkit.history import InMemoryHistory
 
-from ..ai.decision_engine import DecisionEngine
+if TYPE_CHECKING:
+    from ..ai.decision_engine import Intent
+
+from ..ai.decision_engine import DecisionEngine, Intent
 
 
 # ── Colour palette ────────────────────────────────────────────────────────────
@@ -70,8 +75,10 @@ class NexusApp:
         self.decision_engine = DecisionEngine(llm_client, router_client, self.session_manager)
         self.orchestrator = None
 
-        self.last_action_result = None
-        self.last_action_type = None
+        self.last_action_result: Optional[str] = None
+        self.last_action_type: str = "CHAT"
+        # /think toggle — show the thinking block by default
+        self._show_thinking: bool = True
 
     # ── Header ────────────────────────────────────────────────────────────────
 
@@ -79,7 +86,9 @@ class NexusApp:
         """Print the Nexus splash header once on startup."""
         self.console.clear()
 
-        logo = pyfiglet.figlet_format("NEXUS", font="slant")
+        # banner3-D font, replacing '#' → '█' gives the Claude Code pixel-block look
+        logo = pyfiglet.figlet_format("NEXUS", font="banner3-D")
+        logo = logo.replace("#", "█").replace(":", " ")  # clean up filler dots
         self.console.print(
             Panel(
                 Text(logo, style=f"bold {ACCENT}", justify="center"),
@@ -146,6 +155,12 @@ class NexusApp:
             self._show_help()
             return True
 
+        if command == "/think":
+            self._show_thinking = not self._show_thinking
+            state = "[green]on[/green]" if self._show_thinking else "[yellow]off[/yellow]"
+            self.console.print(f"  [{DIM}]Thinking block {state}[/{DIM}]")
+            return True
+
         if command == "/browse":
             return await self._cmd_browse(args)
 
@@ -175,6 +190,7 @@ class NexusApp:
             ("  /install [i]pkg[/i]",   "Install a system package"),
             ("  /remove [i]pkg[/i]",    "Remove a system package"),
             ("  /update",               "Update all system packages"),
+            ("  /think",                "Toggle the Thinking block on/off"),
             ("  /status",               "Show active AI provider and mode"),
             ("  /help",                 "Show this help"),
             ("  /exit",                 "Quit Nexus"),
@@ -263,9 +279,36 @@ class NexusApp:
     # ── Chat handler ──────────────────────────────────────────────────────────
 
     async def _handle_chat(self, text: str):
-        # ── Run decision engine + memory query in PARALLEL ───────────────────
-        # Both are network/CPU bound; running concurrently saves 300-600ms on cache-miss.
+        """
+        Handles a natural-language input:
+          1. Runs decision engine + memory in parallel (shows streaming reasoning)
+          2. For PLAN: streams plan-build tokens live under a collapsible header
+          3. For CHAT: streams LLM tokens directly to the terminal (no buffering)
+        """
         has_memory = hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client
+
+        # ── Step 1: Decision engine + memory in parallel ───────────────────────
+        has_memory = hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client
+        decision = None
+        context_str = ""
+
+        # Print the thinking header (toggleable via /think)
+        think_icon = "▼" if self._show_thinking else "▶"
+        think_hint = "(/think to toggle)"
+        
+        # Immediate memory feedback
+        if has_memory:
+            self.console.print(f"[dim]🧠 Querying long-term memory...[/dim]")
+
+        if self._show_thinking:
+            self.console.print(
+                Text.assemble(
+                    (f"{think_icon} ", f"bold {ACCENT}"),
+                    ("Thinking", ACCENT),
+                    ("  ", ""),
+                    (think_hint, DIM),
+                )
+            )
 
         async def _run_decision():
             return await asyncio.to_thread(self.decision_engine.analyze, text)
@@ -280,18 +323,51 @@ class NexusApp:
             except Exception:
                 return ""
 
-        decision, context_str = await asyncio.gather(_run_decision(), _run_memory())
+        try:
+            # Run decision and memory lookup sequentially to help linter inference
+            # or use gather with explicit results if desired.
+            # Sequential is safer for the linter here.
+            res_decision = await _run_decision()
+            res_memory = await _run_memory()
+            
+            # Explicitly cast for Pyre
+            decision: "Intent" = cast("Intent", res_decision)
+            context_str: str = cast(str, res_memory)
+        except Exception as e:
+            self.console.print(f"[{ERROR}]Decision engine error:[/{ERROR}] {e}")
+            return
+
+        # Print reasoning under the thinking header if visible
+        if self._show_thinking:
+            # decision should be the un-wrapped Intent object
+            reasoning = getattr(decision, "reasoning", "") or ""
+            if reasoning:
+                self.console.print(
+                    Text.assemble(("  ", ""), (reasoning, f"dim italic {ACCENT}")),
+                    highlight=False,
+                )
+            self.console.print()   # space after thinking block
 
         # ── Cached context shortcut ───────────────────────────────────────────
         if decision.action == "SHOW_CACHED":
-            self.console.print(Panel(
-                (decision.cached_result or "").strip(),
-                title="[bold]Cached Result[/bold]",
-                border_style=ACCENT,
-            ))
+            # Show the cached response using the same visual style as a live reply
+            cached_text = (decision.cached_result or "").strip()
+            self.console.print(Rule(style="dim"))
+            self.console.print(
+                Text.assemble(
+                    ("● ", f"bold {ACCENT}"),
+                    ("Nexus", f"bold {ACCENT}"),
+                    ("  ", ""),
+                    ("(cached)", DIM),
+                )
+            )
+            self.console.print()
+            self.console.print(Markdown(cached_text))
+            self.console.print()
+            self.console.print(Rule(style="dim"))
             return
 
-        # ── Dispatch on intent ────────────────────────────────────────────────
+        # Dispatch on intent
         if decision.action == "CLARIFY":
             self.console.print(f"[{WARN}]🤔 I'm not sure what you mean. Did you mean:[/{WARN}]")
             if decision.clarification_options:
@@ -311,10 +387,6 @@ class NexusApp:
 
         if decision.action == "COMMAND":
             cmd_str = f"{decision.command} {decision.args}".strip() if decision.args else decision.command
-            # Only dispatch as a Nexus slash command if it starts with '/'
-            # e.g. /install, /update, /browse — those are Nexus internals.
-            # Shell commands decided by the LLM (e.g. 'docker run ...') are NOT
-            # Nexus slash commands — fall through to PLAN so the executor runs them.
             if cmd_str and cmd_str.startswith("/"):
                 success = await self._handle_command(cmd_str)
                 if success:
@@ -326,11 +398,8 @@ class NexusApp:
                         success=True,
                     )
                     return
-                # If slash command itself failed (unknown command), fall through to PLAN
-                # and also invalidate the cache so next attempt re-routes correctly
                 if hasattr(self.decision_engine, 'invalidate_cache'):
                     self.decision_engine.invalidate_cache()
-            # Non-slash command or failed slash → treat as PLAN so the executor handles it
             decision.action = "PLAN"
 
         if decision.action == "PLAN":
@@ -343,7 +412,6 @@ class NexusApp:
                     self.llm_client,
                     fallback_clients=self.fallback_clients,
                 )
-            # Pass recent conversation context to Execute plan so it doesn't hallucinate "last request"
             recent_context = ""
             if self.session_manager:
                 recent_history = self.session_manager.get_recent_history(limit=3)
@@ -351,43 +419,181 @@ class NexusApp:
                     history_text = "\n".join([f"Previous user request: {t['user_input']}" for t in recent_history])
                     recent_context = f"Context from previous turns:\n{history_text}\n"
 
-            result = await self.orchestrator.execute_plan(text, context_str=recent_context)
+            # ── Stream plan tokens live ───────────────────────────────────────
+            if self._show_thinking:
+                self.console.print(
+                    Text.assemble(("▼ ", f"bold {ACCENT}"), ("Planning", ACCENT), ("  ", ""), ("building your plan…", DIM))
+                )
+                
+                try:
+                    # Token-by-token streaming of plan steps for better UX
+                    steps_accumulator = [] 
+                    found_steps = set()
+                    
+                    # Ensure context components are strings
+                    safe_recent = str(recent_context or "")
+                    safe_memory = str(context_str or "")
+                    
+                    if self.orchestrator is None:
+                        return
+                    
+                    # Use local variable for type narrowing
+                    orch = self.orchestrator
+                    planning_prompt = orch.planner._build_prompt(text, safe_recent + safe_memory)
+                    # Add a marker so the LLM starts outputting the REAL JSON array
+                    planning_prompt += "\n\nCRITICAL: Start your response with '[' and follow the JSON format exactly."
+
+                    # Consumer function to run in background thread
+                    def consume_and_print(client, prompt, accumulator, found_set, console_ref):
+                        import re
+                        json_started = False
+                        # Use passed arguments to avoid closure type inference issues
+                        for token in client.generate_stream(prompt):
+                            t_str = str(token)
+                            if "[" in t_str:
+                                json_started = True
+                            
+                            if not json_started:
+                                continue
+                                
+                            accumulator.append(t_str)
+                            current_text = "".join(accumulator)
+                            # Find "description": "..." patterns
+                            matches = re.finditer(r'["\']description["\']\s*:\s*["\']([^"\']+)["\']', current_text)
+                            for m in matches:
+                                d_desc = m.group(1)
+                                if d_desc not in found_set:
+                                    console_ref.print(f"  [dim cyan]→[/dim cyan] [dim]{d_desc}[/dim]")
+                                    found_set.add(d_desc)
+                    
+                    # Use to_thread with explicit arguments
+                    await asyncio.to_thread(consume_and_print, self.llm_client, planning_prompt, steps_accumulator, found_steps, self.console) # type: ignore
+                except Exception:
+                    pass   # planning stream is best-effort
+                self.console.print()
+
+            # ── Execute the plan ──────────────────────────────────────────────
+            # To save time, we can parse the steps we just streamed
+            # instead of asking the orchestrator to plan from scratch.
+            try:
+                import json
+                from ..core.orchestrator import TaskStep
+                full_raw = "".join(steps_accumulator)
+                clean_json = full_raw.replace("```json", "").replace("```", "").strip()
+                start_idx = clean_json.find("[")
+                end_idx = clean_json.rfind("]")
+                if start_idx != -1 and end_idx != -1:
+                    # Explicit indexing to avoid slice lints
+                    json_raw = clean_json[start_idx:]
+                    clean_json = json_raw[:end_idx - start_idx + 1]
+                
+                plan_data = json.loads(clean_json)
+                steps = []
+                for i, s_data in enumerate(plan_data, 1):
+                    steps.append(TaskStep(
+                        id=i,
+                        description=s_data.get("description", ""),
+                        action=s_data.get("action", ""),
+                        command=s_data.get("command", ""),
+                        filename_pattern=s_data.get("filename_pattern"),
+                        file_content=s_data.get("file_content"),
+                        use_cloud=s_data.get("headless", False)
+                    ))
+                
+                if not steps:
+                    raise ValueError("No steps in plan")
+                    
+                orch = self.orchestrator
+                if orch:
+                    result = await orch.execute_plan(steps, context_str=recent_context)
+                else:
+                    result = None
+                
+                if not result:
+                     raise ValueError("Plan execution failed")
+            except Exception:
+                # Fallback: Let orchestrator do its own (non-streaming) planning
+                orch = self.orchestrator
+                if orch:
+                    result = await orch.execute_plan(text, context_str=recent_context)
+                else:
+                    self.console.print(f"[{ERROR}]Execution engine error: Orchestrator unavailable.[/{ERROR}]")
+                    return
+            
+            # Store result for session
             self.session_manager.add_turn(
                 user_input=text,
                 intent_action="PLAN",
-                intent_reasoning=decision.reasoning,
-                result=result,
-                success=result is not None,
+                intent_reasoning=getattr(decision, "reasoning", "Autonomous Planning"),
+                result=result.output,
+                success=result.success,
             )
-            self.last_action_result = result
+            self.last_action_result = result.output
             self.last_action_type   = "PLAN"
             return
 
-        # ── Pure chat ─────────────────────────────────────────────────────────
+        # ── Pure chat — stream with Rich Live for beautiful rendering ──────────
         if not self.llm_client:
             self.console.print(f"[{ERROR}]No AI provider configured. Set an API key in your .env file.[/{ERROR}]")
             return
 
-        # context_str already fetched in parallel with the decision above
         final_prompt = text
         if context_str:
-            final_prompt = f"Context from previous conversations:\n{context_str}\n\nUser: {text}"
+            # Mark it so enrich_prompt can skip if it wants
+            final_prompt = f"--- MEMORY CONTEXT ---\n{context_str}\n--- END MEMORY ---\n\n{text}"
 
-        with self.console.status(f"[{ACCENT}]Thinking…[/{ACCENT}]", spinner="dots"):
+        self.console.print(Rule(style="dim"))
+        self.console.print(
+            Text.assemble(("● ", f"bold {ACCENT}"), ("Nexus", f"bold {ACCENT}")),
+        )
+        self.console.print()
+
+        # ── Chat Generation Loop (with fallback) ─────────────────────────────
+        response = ""
+        # Try primary, then fallbacks
+        clients_to_try = [self.llm_client] + [c for c in self.fallback_clients if c != self.llm_client]
+        
+        for i, client in enumerate(clients_to_try):
+            response_buf: list[str] = []
+            
+            # Capture the client in a local var for the closure
+            current_client = client
+
+            def _stream_with_live(client_ref, prompt_ref, live_ref) -> list[str]:
+                parts: list[str] = []
+                for chunk in client_ref.generate_stream(prompt_ref):
+                    if not chunk: continue
+                    parts.append(str(chunk))
+                    live_ref.update(Markdown("".join(parts)))
+                return parts
+
             try:
-                # Check if streaming is supported (all real clients implement it)
-                # Run in thread since generate_stream() is a sync generator
-                chunks = await asyncio.to_thread(
-                    lambda: list(self.llm_client.generate_stream(final_prompt))
-                )
+                with Live(Markdown(""), console=self.console, refresh_per_second=12, vertical_overflow="ellipsis") as live_inst:
+                    response_buf = await asyncio.to_thread(_stream_with_live, current_client, final_prompt, live_inst) # type: ignore
+                
+                response = "".join(response_buf).strip()
+                if response:
+                    break # Success!
+                    
             except Exception as e:
-                self.console.print(f"[{ERROR}]AI error:[/{ERROR}] {e}")
-                return
+                # If it's the last client, show the error. Otherwise, try next.
+                if i == len(clients_to_try) - 1:
+                    self.console.print(f"[{ERROR}]AI error:[/{ERROR}] {e}")
+                    return
+                else:
+                    self.console.print(f"[dim yellow]⚠ Primary model failed, trying fallback...[/dim yellow]")
+                    continue
 
-        # Store to memory in the background — no user-visible output
-        response = "".join(chunks)
+        if not response:
+            self.console.print(f"[dim italic]No response received from any AI model.[/dim italic]")
+        self.console.print(Rule(style="dim"))
 
-        # Store to memory in the background — no user-visible output
+        # Store response in decision engine cache so the next identical query
+        # returns SHOW_CACHED immediately (no LLM call).
+        if response and hasattr(self.decision_engine, "store_response"):
+            self.decision_engine.store_response(text, response)
+
+        # Store to memory in the background
         if hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client:
             asyncio.create_task(asyncio.to_thread(
                 self.llm_client.memory_client.add_memory,
@@ -395,16 +601,20 @@ class NexusApp:
                 {"type": "chat_history"},
             ))
 
-        self.session_manager.add_turn(
-            user_input=text,
-            intent_action="CHAT",
-            intent_reasoning=decision.reasoning,
-            result=response[:500],
-            success=True,
-        )
-
-        self.console.print(Rule(style="dim"))
-        self.console.print(Markdown(response), style=NEUTRAL)
+            # Limit result size to avoid excessive memory usage in history
+            safe_response = response or ""
+            if len(safe_response) > 500:
+                truncated_result = safe_response[0:500]
+            else:
+                truncated_result = safe_response
+                
+            self.session_manager.add_turn(
+                user_input=text,
+                intent_action="CHAT",
+                intent_reasoning=getattr(decision, "reasoning", "Standard Query"),
+                result=truncated_result,
+                success=True,
+            )
 
 
 # Keep the old class name as an alias so main.py doesn't break

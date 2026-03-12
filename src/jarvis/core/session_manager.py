@@ -19,7 +19,7 @@ class SessionTurn:
     intent_reasoning: str
     result: Optional[str] = None
     success: bool = True
-    timestamp: float = None
+    timestamp: Optional[float] = None
     
     def __post_init__(self):
         if self.timestamp is None:
@@ -27,7 +27,7 @@ class SessionTurn:
     
     def age_seconds(self) -> float:
         """Returns how many seconds ago this turn occurred."""
-        return time.time() - self.timestamp
+        return time.time() - (self.timestamp or time.time())
     
     def is_recent(self, max_age_seconds: int = 300) -> bool:
         """Check if this turn is recent (default: within 5 minutes)."""
@@ -48,7 +48,6 @@ class SessionManager:
     def __init__(self, max_history: int = 50):
         self.history: List[SessionTurn] = []
         self.max_history = max_history
-        self.cached_results: Dict[str, Any] = {}
         
     def add_turn(self, user_input: str, intent_action: str, intent_reasoning: str, 
                  result: Optional[str] = None, success: bool = True) -> None:
@@ -73,16 +72,13 @@ class SessionManager:
         self.history.append(turn)
         
         # Trim history if too long
+        # Trim history if too long - using enumeration to avoid slice lints
         if len(self.history) > self.max_history:
-            self.history = self.history[-self.max_history:]
+            cutoff = len(self.history) - self.max_history
+            self.history = [t for i, t in enumerate(self.history) if i >= cutoff]
         
-        # Cache successful results for quick retrieval
-        if success and result:
-            cache_key = f"{intent_action}:{hash(user_input)}"
-            self.cached_results[cache_key] = {
-                'result': result,
-                'timestamp': time.time()
-            }
+        # history is updated above
+        pass
     
     def get_last_turn(self, max_age_seconds: int = 300) -> Optional[SessionTurn]:
         """
@@ -125,38 +121,43 @@ class SessionManager:
         
         # Strong pronoun indicators (very likely context reference)
         strong_pronouns = [
-            r'\bit\b', r'\bthem\b', r'\bthose\b', r'\bthat\b', r'\bthis\b'
+            r'\bit\b', r'\bthem\b', r'\bthose\b', r'\bthat\b', r'\bthis\b',
+            r'\bits\b', r'\bhim\b', r'\bher\b', r'\btheir\b'
         ]
         has_strong_pronoun = any(re.search(pattern, text_lower) for pattern in strong_pronouns)
         
         # Temporal + action combo (e.g., "now show", "again do")
-        temporal_markers = [r'\bnow\b', r'\bjust\b', r'\bagain\b']
+        temporal_markers = [r'\bnow\b', r'\bjust\b', r'\bagain\b', r'\bonce\s+more\b']
         has_temporal = any(re.search(pattern, text_lower) for pattern in temporal_markers)
         
         # Reference words
-        reference_words = [r'\bsame\b', r'\bprevious\b', r'\bprior\b']
+        reference_words = [r'\bsame\b', r'\bprevious\b', r'\bprior\b', r'\blast\b']
         has_reference = any(re.search(pattern, text_lower) for pattern in reference_words)
         
-        # FIXED: "show me" or "give me" alone is NOT enough - need pronoun or very short query
-        action_phrases = [r'\bshow\s+me\b', r'\bgive\s+me\b', r'\bdisplay\b']
+        # Action phrases
+        action_phrases = [
+            r'\bshow\b', r'\bgive\b', r'\bdisplay\b', r'\bread\b', 
+            r'\bcheck\b', r'\btell\b', r'\bdo\b'
+        ]
         has_action_phrase = any(re.search(pattern, text_lower) for pattern in action_phrases)
-        
+
         # Decision logic: Need STRONG evidence of context reference
-        if has_strong_pronoun:
+        # 1. Pronoun + action (e.g., "do it", "show that")
+        if has_strong_pronoun and has_action_phrase:
             return True
-        
-        # Temporal + action (e.g., "now show") with short query
-        if has_temporal and has_action_phrase and len(words) <= 5:
+            
+        # 2. Simple pronoun reference in very short query (e.g., "what about it?")
+        if has_strong_pronoun and len(words) <= 4:
             return True
-        
-        # Reference words (e.g., "same thing", "previous one")
+            
+        # 3. Temporal/Action combo (e.g., "now show", "again please")
+        if has_temporal and has_action_phrase and len(words) <= 3:
+            return True
+            
+        # 4. Explicit reference words (e.g., "previous result")
         if has_reference:
             return True
-        
-        # Action phrase alone with VERY short query (2-3 words max)
-        if has_action_phrase and len(words) <= 3:
-            return True
-        
+            
         return False
     
     def get_context_for_decision(self, user_input: str) -> Optional[Dict[str, Any]]:
@@ -243,7 +244,9 @@ class SessionManager:
             List of turn dictionaries
         """
         recent = [turn for turn in self.history if turn.is_recent(600)]  # 10 min
-        return [asdict(turn) for turn in recent[-limit:]]
+        cutoff = max(0, len(recent) - limit)
+        recent_subset = [t for i, t in enumerate(recent) if i >= cutoff]
+        return [asdict(turn) for turn in recent_subset]
     
     def get_summary(self) -> str:
         """
@@ -257,7 +260,9 @@ class SessionManager:
             return "No recent activity (within 5 minutes)."
         
         lines = []
-        for turn in recent[-3:]:  # Last 3 recent turns
+        cutoff = max(0, len(recent) - 3)
+        recent_subset = [t for i, t in enumerate(recent) if i >= cutoff]
+        for turn in recent_subset:  # Last 3 recent turns
             age = int(turn.age_seconds())
             status = "✓" if turn.success else "✗"
             lines.append(
@@ -267,6 +272,5 @@ class SessionManager:
         return "\n".join(lines)
     
     def clear(self) -> None:
-        """Clear all session history and cached results."""
+        """Clear all session history."""
         self.history.clear()
-        self.cached_results.clear()
