@@ -1,9 +1,11 @@
 import typer
 import os
 import sys
+from typing import List, Optional
 from rich.console import Console
 from rich.panel import Panel
 from dotenv import load_dotenv
+from .utils.syntax_output import print_command_output, print_error_output, print_inline_command
 
 load_dotenv()
 
@@ -12,7 +14,7 @@ from .core.system_detector import SystemDetector
 from .core.executor import CommandExecutor
 from .modules.package_manager import AppInstaller
 from .modules.browser_manager import BrowserManager
-from .ai.llm_client import MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient, GroqClient, GroqGPTClient
+from .ai.llm_client import LLMClient, MockLLMClient, OpenAIClient, GoogleGenAIClient, OpenRouterClient, GroqClient, GroqGPTClient
 
 from .ai.memory_client import SupermemoryClient
 from .ai.command_generator import CommandGenerator
@@ -47,34 +49,43 @@ if not config_mgr.config.onboarding_completed:
     config_mgr = ConfigManager()
 
 # Setup AI
-# Prioritize Groq (User Preference), then OpenRouter, then Google, then Mock
-api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("JARVIS_API_KEY") 
-openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("OPENROUTER_API_KEY")
-groq_key = config_mgr.config.groq_api_key or os.getenv("GROQ_API_KEY")
-groq_gpt_key = config_mgr.config.groq_gpt_api_key or os.getenv("GROQ_GPT_API_KEY") or groq_key
+# Prioritize Nexus names, then generic names, then legacy Jarvis names
+api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("NEXUS_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("JARVIS_API_KEY")
+openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("NEXUS_OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("JARVIS_OPENROUTER_API_KEY")
+groq_key = config_mgr.config.groq_api_key or os.getenv("NEXUS_GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("JARVIS_GROQ_API_KEY")
+groq_gpt_key = config_mgr.config.groq_gpt_api_key or os.getenv("NEXUS_GROQ_GPT_API_KEY") or os.getenv("GROQ_GPT_API_KEY") or groq_key
 
-llm_client = None
-router_client = None
-fallback_clients = []
+llm_client: Optional[LLMClient] = None
+router_client: Optional[LLMClient] = None
+fallback_clients: List[LLMClient] = []
 
 # 1. Setup Groq (Preferred Brain / Limbic System)
 # Used for DECISIONS (Router) always if available
 if groq_key:
     try:
-        groq_client = GroqClient(api_key=groq_key, model="moonshotai/kimi-k2-instruct-0905")
+        # Groq uses different models: llama-3.3-70b-versatile, llama-3.1-8b-instant, etc.
+        # kimi is NOT a groq model, but we keep it if that was intent via some proxy
+        # but for native groq we should use a valid one.
+        groq_client = GroqClient(api_key=groq_key, model="llama-3.3-70b-versatile")
         router_client = groq_client
-    except Exception as e:
-        pass  # handled by fallback chain below
+    except Exception:
+        pass
 
 # 2. Setup Chat Brain (Cortex)
-# Priority: OpenRouter (GPT-4o/etc) -> Groq GPT (openai/gpt-oss-120b) -> Groq (Kimi) -> Google (Gemini) -> Mock
+# Priority: OpenRouter -> Groq -> Google -> Mock
 if openrouter_key:
+    # Use user's requested models as fallbacks via OpenRouter
     llm_client = OpenRouterClient(api_key=openrouter_key)
     fallback_clients.append(llm_client)
+    
+    # Add Grok and Kimi as dedicated fallbacks if requested
+    fallback_clients.append(OpenRouterClient(api_key=openrouter_key, model="x-ai/grok-2-1212"))
+    fallback_clients.append(OpenRouterClient(api_key=openrouter_key, model="moonshotai/kimi-k2-instruct-0905"))
 
 if groq_gpt_key:
     try:
-        fallback_v = GroqGPTClient(api_key=groq_gpt_key, model="openai/gpt-oss-120b")
+        # Use a valid Groq model name
+        fallback_v = GroqGPTClient(api_key=groq_gpt_key, model="llama-3.3-70b-versatile")
         if not llm_client:
             llm_client = fallback_v
         fallback_clients.append(fallback_v)
@@ -96,7 +107,7 @@ if api_key:
 if not llm_client:
     llm_client = MockLLMClient()
     fallback_clients.append(llm_client)
-    console.print("[bold yellow]⚠ No API key found — running in mock mode. Add keys to .env for real AI.[/bold yellow]")
+    console.print("[bold yellow]⚠ Running with reduced intelligence. Provide API keys for a better experience.[/bold yellow]")
 
 if llm_client is None:
     llm_client = MockLLMClient()
@@ -119,7 +130,13 @@ elif openrouter_key:
 # Setup Memory (if enabled)
 if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
     memory_client = SupermemoryClient(api_key=config_mgr.config.supermemory_api_key)
-    llm_client.set_memory_client(memory_client)
+    
+    # Attach memory to ALL potential brains
+    for client in fallback_clients:
+        if client:
+            client.set_memory_client(memory_client)
+    if llm_client and llm_client not in fallback_clients:
+        llm_client.set_memory_client(memory_client)
     info = sys_detector.get_info()
     sys_context = f"My System: OS={info.os_name} {info.os_version}, Package Manager={info.package_manager.value}"
     existing_memories = memory_client.query_memory(sys_context)
@@ -144,6 +161,10 @@ def chat(prompt: str):
         f"User: {prompt}"
     )
     
+    if llm_client is None:
+        console.print("[bold red]Error:[/bold red] No AI brain configured.")
+        return
+        
     response = llm_client.generate_response(nexus_prompt)
     console.print(Panel(f"[bold cyan]Nexus:[/bold cyan] {response}", title="Response"))
 
@@ -196,13 +217,15 @@ def do(request: str):
     
     command = command_generator.generate_command(request)
     
-    console.print(f"[bold]Generated Command:[/bold] [cyan]{command}[/cyan]")
+    console.print("[dim]Generated command:[/dim]")
+    print_inline_command(console, command, language="bash")
+    console.print()
     
     # 2. Execute (Executor handles safety and confirmation)
     return_code, stdout, stderr = executor.run(command)
     
     # --- Feedback Loop (Phase 7) ---
-    if hasattr(llm_client, "memory_client") and llm_client.memory_client:
+    if llm_client is not None and hasattr(llm_client, "memory_client") and llm_client.memory_client:
         status = "Success" if return_code == 0 else "Failure"
         output_snippet = stdout[:200] if return_code == 0 else stderr[:200]
         
@@ -221,9 +244,9 @@ def do(request: str):
 
     if return_code == 0:
         if stdout:
-            console.print(Panel(stdout, title="Output", border_style="green"))
+            print_command_output(console, stdout, action="do", success=True)
     else:
-        console.print(Panel(stderr, title="Error", border_style="red"))
+        print_error_output(console, stderr or "(no output)", action="do")
 
 @app.command()
 def info():
@@ -269,6 +292,10 @@ def search(query: str):
         console.print("[red]Search is only supported with Google (Gemini) provider.[/red]")
         return
 
+    if llm_client is None:
+        console.print("[bold red]Error:[/bold red] Search requires an active AI client.")
+        return
+        
     console.print(Panel(f"[bold blue]Query:[/bold blue] {query}", title="Google Search"))
     with console.status("[bold cyan]Searching google...[/bold cyan]"):
         result = llm_client.search(query)
@@ -287,13 +314,14 @@ def main(ctx: typer.Context):
         import sys
         
         # Ensure dependencies are passed
-        from .ui.console_app import JarvisApp
+        from .ui.console_app import NexusApp
         
         # We need to ensure dependencies are initialized
         # existing code initialized them globally, which is fine.
         
-        tui = JarvisApp(
+        tui = NexusApp(
             llm_client=llm_client,
+            router_client=router_client,
             browser_manager=browser_manager,
             executor=executor,
             app_installer=app_installer,

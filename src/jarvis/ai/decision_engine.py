@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 import re
 import time
 import hashlib
@@ -7,12 +7,14 @@ from threading import Lock
 
 @dataclass
 class Intent:
-    action: str  # COMMAND, CHAT, SEARCH, BROWSE, PLAN, SHOW_CACHED
+    action: str  # COMMAND, CHAT, SEARCH, BROWSE, PLAN, SHOW_CACHED, CLARIFY
     command: Optional[str] = None
     args: Optional[str] = None
     confidence: float = 0.0
     reasoning: str = ""
     cached_result: Optional[str] = None  # For SHOW_CACHED action
+    clarification_options: Optional[List[str]] = None # For CLARIFY action
+    plan_steps: Optional[List[Any]] = None # For PLAN action
 
 class DecisionEngine:
     """
@@ -33,35 +35,78 @@ class DecisionEngine:
         self.llm_client     = llm_client
         self.router_client  = router_client
         self.session_manager = session_manager
-        # {cache_key: (Intent, timestamp)}
+        self.last_action_result = None
+        self.last_action_type   = "CHAT" # default
+        # /think toggle — show the thinking block by default
+        self._show_thinking: bool = True
+        # Intent routing cache: {cache_key: (Intent, timestamp)}
         self._cache: Dict[str, Tuple["Intent", float]] = {}
         self._cache_lock = Lock()
         self._cache_hits = 0
         self._cache_misses = 0
+        # Response content cache: {cache_key: (response_text, timestamp)}
+        # Stores the actual LLM-generated response so repeats show SHOW_CACHED
+        self._response_cache: Dict[str, Tuple[str, float]] = {}
 
     def _cache_key(self, text: str) -> str:
-        """Normalised cache key — case-insensitive, whitespace-collapsed."""
-        normalised = " ".join(text.lower().split())
+        """Normalised cache key — collapses whitespace and removes politeness markers."""
+        # Strip politeness and common prefixes to increase cache hit rate
+        t = text.lower().strip()
+        t = re.sub(r'^(nexus|jarvis|please|can\s+you|hey|okay|now)\b', '', t).strip()
+        normalised = " ".join(t.split())
         return hashlib.md5(normalised.encode(), usedforsecurity=False).hexdigest()
 
     def _get_cached(self, key: str) -> Optional["Intent"]:
+        """Return a SHOW_CACHED intent if the exact query was answered before."""
         with self._cache_lock:
+            # Check response cache first — if we have the actual answer, show it
+            resp_entry = self._response_cache.get(key)
+            if resp_entry and (time.monotonic() - resp_entry[1]) < self.CACHE_TTL:
+                self._cache_hits += 1
+                return Intent(
+                    action="SHOW_CACHED",
+                    confidence=1.0,
+                    reasoning="Exact query seen before — showing cached response.",
+                    cached_result=resp_entry[0],
+                )
+            if resp_entry:   # expired
+                del self._response_cache[key]
+
+            # Fallback: routing-only cache (no response text stored yet)
             entry = self._cache.get(key)
             if entry and (time.monotonic() - entry[1]) < self.CACHE_TTL:
-                self._cache_hits += 1
+                # We have a routing decision cached but no response text.
+                # Return the original action so it executes normally.
                 return entry[0]
-            if entry:                       # expired
+            if entry:        # expired
                 del self._cache[key]
         return None
 
     def _set_cached(self, key: str, intent: "Intent") -> None:
+        """Cache the routing intent (CHAT/PLAN/etc.) for this key."""
         with self._cache_lock:
-            # Evict oldest entry when full
             if len(self._cache) >= self.CACHE_SIZE:
                 oldest = min(self._cache, key=lambda k: self._cache[k][1])
                 del self._cache[oldest]
             self._cache[key] = (intent, time.monotonic())
             self._cache_misses += 1
+
+    def store_response(self, user_input: str, response_text: str) -> None:
+        """
+        Store the actual LLM response for a query so subsequent identical
+        queries return SHOW_CACHED instead of re-calling the LLM.
+
+        Call this from the UI layer after a successful CHAT response.
+        Only stores responses for CHAT actions (not PLAN/COMMAND outputs).
+        """
+        if not response_text or not response_text.strip():
+            return
+        key = self._cache_key(user_input)
+        with self._cache_lock:
+            if len(self._response_cache) >= self.CACHE_SIZE:
+                oldest = min(self._response_cache, key=lambda k: self._response_cache[k][1])
+                del self._response_cache[oldest]
+            self._response_cache[key] = (response_text.strip(), time.monotonic())
 
     def get_cache_stats(self) -> Dict[str, int]:
         with self._cache_lock:
@@ -69,12 +114,14 @@ class DecisionEngine:
                 "hits": self._cache_hits,
                 "misses": self._cache_misses,
                 "size": len(self._cache),
+                "response_cache_size": len(self._response_cache),
             }
 
     def invalidate_cache(self) -> None:
         """Clear the intent cache (e.g. when session resets)."""
         with self._cache_lock:
             self._cache.clear()
+            self._response_cache.clear()
 
     def analyze(self, user_input: str) -> "Intent":
         """
@@ -228,15 +275,17 @@ To make your decision, ask yourself:
 - If the user says "Show me X", "Get X", "Display X", "Give me X", "Fetch X" → ALWAYS choose PLAN, NEVER CHAT.
 - If the user asks for "posts", "data", "results", "list", "top 10", "latest" → PLAN (they want live data).
 - NEVER return a script/code in CHAT unless explicitly asked "write a script" or "show me the code".
-- When in doubt: Choose PLAN over CHAT (it's better to attempt action than just talk).
+- When in doubt between PLAN and CHAT: Choose PLAN (it's better to attempt action than just talk).
 - If user says "now X" or references "it/them/that" → They likely want follow-up action on previous task.
+- AMBIGUITY TRIGGER: If the user's request is extremely vague, unspecific, or you are guessing their intent (confidence < 0.70), YOU MUST set action to "CLARIFY" and provide 2-3 multiple choice options in "clarification_options".
 
 OUTPUT FORMAT (JSON ONLY):
 {{
-  "action": "PLAN" | "COMMAND" | "CHAT" | "SEARCH",
+  "action": "PLAN" | "COMMAND" | "CHAT" | "SEARCH" | "CLARIFY",
   "command": "/command args" (only if action is COMMAND),
   "confidence": <float 0.0-1.0>,
-  "reasoning": "<brief explanation>"
+  "reasoning": "<explanation>",
+  "clarification_options": ["Option 1?", "Option 2?", "Something else?"] (ONLY if action is CLARIFY)
 }}
 """
             try:
@@ -265,6 +314,12 @@ OUTPUT FORMAT (JSON ONLY):
                 action = str(intent_data.get("action", "PLAN")).upper()
                 confidence = float(intent_data.get("confidence", 0.5))
                 reasoning = str(intent_data.get("reasoning", ""))
+                clarification_options = intent_data.get("clarification_options", None)
+                
+                # Enforce CLARIFY for low confidence
+                if confidence < 0.70 and action != "CLARIFY":
+                    action = "CLARIFY"
+                    clarification_options = ["Could you provide more details?", "Are you looking to view system state?", "Something else?"]
                 
                 command_str = str(intent_data.get("command", "")) if intent_data.get("command") else ""
                 cmd = None
@@ -280,14 +335,20 @@ OUTPUT FORMAT (JSON ONLY):
                     command=cmd,
                     args=args,
                     confidence=confidence,
-                    reasoning=reasoning
+                    reasoning=reasoning,
+                    clarification_options=clarification_options
                 )
                 # Cache the LLM result so next identical query is instant
                 self._set_cached(cache_key, result)
                 return result
 
-            except Exception:
-                pass
+            except Exception as e:
+                # Return the actual error so the user and developer can see why routing hit a wall
+                return Intent(
+                    action="PLAN",
+                    confidence=0.5,
+                    reasoning=f"Groq API Error: {str(e)}"
+                )
 
 
         
@@ -295,5 +356,5 @@ OUTPUT FORMAT (JSON ONLY):
         return Intent(
             action="PLAN",
             confidence=0.5,
-            reasoning="No clear intent detected. Defaulting to PLAN to attempt forming an action plan."
+            reasoning="Intelligent System Routing: Initializing multi-step execution plan."
         )

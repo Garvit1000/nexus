@@ -4,11 +4,11 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
 
-CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "jarvis"
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "nexus"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
 @dataclass
-class JarvisConfig:
+class NexusConfig:
     dry_run: bool = False
     model_provider: str = "openrouter" # Default to openrouter as it covers most cases
     api_key: Optional[str] = None # Deprecated, kept for backward compat
@@ -37,16 +37,16 @@ class ConfigManager:
         if not self.config_file.parent.exists():
             self.config_file.parent.mkdir(parents=True, exist_ok=True)
 
-    def _load_config(self) -> JarvisConfig:
-        config = JarvisConfig()
+    def _load_config(self) -> NexusConfig:
+        config = NexusConfig()
         if self.config_file.exists():
             try:
                 with open(self.config_file, "r") as f:
                     data = json.load(f)
-                    # Filter out keys that don't belong to JarvisConfig
-                    valid_keys = {k for k in JarvisConfig.__annotations__}
+                    # Filter out keys that don't belong to NexusConfig
+                    valid_keys = NexusConfig.__dataclass_fields__.keys()
                     filtered_data = {k: v for k, v in data.items() if k in valid_keys}
-                    config = JarvisConfig(**filtered_data)
+                    config = NexusConfig(**filtered_data)
             except (json.JSONDecodeError, TypeError):
                 pass
         
@@ -54,7 +54,7 @@ class ConfigManager:
         if os.getenv("JARVIS_API_KEY"):
             config.api_key = os.getenv("JARVIS_API_KEY")
         if os.getenv("JARVIS_MODEL_PROVIDER"):
-            config.model_provider = os.getenv("JARVIS_MODEL_PROVIDER")
+            config.model_provider = str(os.getenv("JARVIS_MODEL_PROVIDER"))
         if os.getenv("JARVIS_DRY_RUN"):
             config.dry_run = os.getenv("JARVIS_DRY_RUN") == "1"
         if os.getenv("BROWSER_USE_API_KEY"):
