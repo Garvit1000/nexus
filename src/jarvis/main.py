@@ -5,7 +5,7 @@ from typing import List, Optional
 from rich.console import Console
 from rich.panel import Panel
 from dotenv import load_dotenv
-from .utils.syntax_output import print_command_output, print_error_output, print_inline_command
+from .utils.syntax_output import print_command_output, print_error_output, print_inline_command, print_syntax
 
 load_dotenv()
 
@@ -48,8 +48,17 @@ if not config_mgr.config.onboarding_completed:
     # Reload config to get new keys
     config_mgr = ConfigManager()
 
+# Setup API key rotator for Google keys (supports GOOGLE_API_KEY, GOOGLE_API_KEY_2, etc.)
+from .core.api_key_rotator import APIKeyRotator, load_keys_from_env
+google_key_rotator: Optional[APIKeyRotator] = None
+try:
+    google_keys = load_keys_from_env()
+    if google_keys:
+        google_key_rotator = APIKeyRotator(google_keys)
+except (ValueError, Exception):
+    pass
+
 # Setup AI
-# Prioritize Nexus names, then generic names, then legacy Jarvis names
 api_key = config_mgr.config.google_api_key or config_mgr.config.api_key or os.getenv("NEXUS_API_KEY") or os.getenv("GOOGLE_API_KEY") or os.getenv("JARVIS_API_KEY")
 openrouter_key = config_mgr.config.openrouter_api_key or os.getenv("NEXUS_OPENROUTER_API_KEY") or os.getenv("OPENROUTER_API_KEY") or os.getenv("JARVIS_OPENROUTER_API_KEY")
 groq_key = config_mgr.config.groq_api_key or os.getenv("NEXUS_GROQ_API_KEY") or os.getenv("GROQ_API_KEY") or os.getenv("JARVIS_GROQ_API_KEY")
@@ -116,13 +125,13 @@ if llm_client is None:
 browser_manager = None
 if api_key:
     browser_manager = BrowserManager(
-        api_key=api_key,
+        api_key=google_key_rotator if google_key_rotator else api_key,
         openrouter_key=openrouter_key,
         provider="google"
     )
 elif openrouter_key:
     browser_manager = BrowserManager(
-        api_key="dummy",
+        api_key=openrouter_key,
         openrouter_key=openrouter_key,
         provider="openrouter"
     )
@@ -303,6 +312,78 @@ def search(query: str):
     console.print(Panel(f"[bold green]Result:[/bold green]\n{result}", title="Search Result"))
 
 
+@app.command()
+def find(query: str):
+    """
+    Search for files or text within the current directory.
+    Example: nexus find "config"
+    """
+    # Simply trigger the TUI with a pre-filled query for now, 
+    # or implement a fast-track terminal logic.
+    # We'll use the Orchestrator's internal logic for consistency.
+    console.print(Panel(f"[bold blue]Searching for:[/bold blue] {query}", title="Local Search"))
+    
+    import asyncio
+    import shlex
+    from .core.executor import CommandExecutor
+    exe = CommandExecutor()
+    safe_q = shlex.quote(query)
+    
+    fd_exists = exe.run("which fd", require_confirmation=False)[0] == 0
+    rg_exists = exe.run("which rg", require_confirmation=False)[0] == 0
+    
+    if "." in query and " " not in query:
+        cmd = f"fd {safe_q} ." if fd_exists else f"find . -maxdepth 4 -name '*'{safe_q}'*' -not -path '*/.*'"
+    else:
+        cmd = f"rg -l -- {safe_q} ." if rg_exists else f"grep -rIl --max-count=1 -- {safe_q} . | head -n 20"
+        
+    rc, out, err = exe.run(cmd, require_confirmation=False)
+    
+    if rc == 0 and not out.strip() and "." in query:
+        console.print("[dim]No local matches. Searching broader...[/dim]")
+        check_locate = "which locate"
+        l_rc, _, _ = exe.run(check_locate, require_confirmation=False)
+        
+        if l_rc == 0:
+            cmd = f"locate -l 10 '*'{safe_q}'*'"
+        else:
+            cmd = f"find / -name '*'{safe_q}'*' 2>/dev/null | head -n 10"
+            
+        rc, out, err = exe.run(cmd, require_confirmation=False)
+
+    if rc == 0:
+        console.print(Panel(out.strip() if out.strip() else "[yellow]No matches found anywhere.[/yellow]", title="Search Results"))
+    else:
+        console.print(f"[red]Search failed:[/red] {err}")
+
+
+@app.command()
+def read(path: str):
+    """
+    Read the content of a local file.
+    Example: nexus read "config.json"
+    """
+    from pathlib import Path
+    abs_path = Path(path).expanduser().resolve()
+
+    home = Path.home()
+    cwd = Path.cwd()
+    allowed = str(abs_path).startswith(str(home)) or str(abs_path).startswith(str(cwd))
+    if not allowed:
+        console.print(f"[red]Error:[/red] Reading files outside your home directory is not allowed: {abs_path}")
+        return
+
+    if not abs_path.exists():
+        console.print(f"[red]Error:[/red] File not found: {abs_path}")
+        return
+    if not abs_path.is_file():
+        console.print(f"[red]Error:[/red] Not a file: {abs_path}")
+        return
+
+    content = abs_path.read_text(encoding='utf-8', errors='ignore')
+    print_syntax(console, content, str(abs_path))
+
+
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
     """
@@ -319,6 +400,22 @@ def main(ctx: typer.Context):
         # We need to ensure dependencies are initialized
         # existing code initialized them globally, which is fine.
         
+        # Heuristics for DecisionEngine (Restored)
+        from .ai.decision_engine import Intent
+        def apply_heuristics(text: str) -> Intent | None:
+            if text.startswith("search for") or text.startswith("google "):
+                query = text.replace("search for", "").replace("google ", "").strip()
+                return Intent(action="COMMAND", command="/search", args=query, confidence=0.9)
+
+            if text.startswith("find file") or text.startswith("search file"):
+                 query = text.replace("find file", "").replace("search file", "").strip()
+                 return Intent(action="COMMAND", command="/find", args=query, confidence=1.0)
+
+            if text.startswith("read file") or text.startswith("cat "):
+                 path = text.replace("read file", "").replace("cat ", "").strip()
+                 return Intent(action="COMMAND", command="/read", args=path, confidence=1.0)
+            return None
+
         tui = NexusApp(
             llm_client=llm_client,
             router_client=router_client,
@@ -327,6 +424,10 @@ def main(ctx: typer.Context):
             app_installer=app_installer,
             fallback_clients=fallback_clients,
         )
+        
+        # Inject heuristics if the engine supports it
+        if hasattr(tui, 'decision_engine'):
+            tui.decision_engine.add_heuristic(apply_heuristics)
         
         try:
             asyncio.run(tui.run_repl())

@@ -47,6 +47,12 @@ class DecisionEngine:
         # Response content cache: {cache_key: (response_text, timestamp)}
         # Stores the actual LLM-generated response so repeats show SHOW_CACHED
         self._response_cache: Dict[str, Tuple[str, float]] = {}
+        # Runtime heuristics injected from main entry
+        self._external_heuristics = []
+
+    def add_heuristic(self, heuristic_fn):
+        """Register a custom heuristic function at runtime."""
+        self._external_heuristics.append(heuristic_fn)
 
     def _cache_key(self, text: str) -> str:
         """Normalised cache key — collapses whitespace and removes politeness markers."""
@@ -70,7 +76,7 @@ class DecisionEngine:
                     cached_result=resp_entry[0],
                 )
             if resp_entry:   # expired
-                del self._response_cache[key]
+                self._response_cache.pop(key, None)
 
             # Fallback: routing-only cache (no response text stored yet)
             entry = self._cache.get(key)
@@ -79,7 +85,7 @@ class DecisionEngine:
                 # Return the original action so it executes normally.
                 return entry[0]
             if entry:        # expired
-                del self._cache[key]
+                self._cache.pop(key, None)
         return None
 
     def _set_cached(self, key: str, intent: "Intent") -> None:
@@ -87,7 +93,7 @@ class DecisionEngine:
         with self._cache_lock:
             if len(self._cache) >= self.CACHE_SIZE:
                 oldest = min(self._cache, key=lambda k: self._cache[k][1])
-                del self._cache[oldest]
+                self._cache.pop(oldest, None)
             self._cache[key] = (intent, time.monotonic())
             self._cache_misses += 1
 
@@ -105,7 +111,7 @@ class DecisionEngine:
         with self._cache_lock:
             if len(self._response_cache) >= self.CACHE_SIZE:
                 oldest = min(self._response_cache, key=lambda k: self._response_cache[k][1])
-                del self._response_cache[oldest]
+                self._response_cache.pop(oldest, None)
             self._response_cache[key] = (response_text.strip(), time.monotonic())
 
     def get_cache_stats(self) -> Dict[str, int]:
@@ -149,6 +155,15 @@ class DecisionEngine:
         if cached is not None:
             return cached
 
+        # --- Fast Path: External Runtime Heuristics ---
+        for h_fn in self._external_heuristics:
+            try:
+                h_intent = h_fn(user_input)
+                if h_intent:
+                    return h_intent
+            except Exception:
+                pass
+
         # --- Fast Path: Heuristics ---
 
         # 1. System Update
@@ -190,13 +205,26 @@ class DecisionEngine:
             query = text.replace("search for", "").replace("google ", "").strip()
             return Intent(action="COMMAND", command="/search", args=query, confidence=0.9)
 
+        # 4. Local File Search
+        if text.startswith("find file") or text.startswith("search file"):
+             query = text.replace("find file", "").replace("search file", "").strip()
+             return Intent(action="PLAN", confidence=1.0, reasoning="Direct request to search local filesystem.")
+        
+        # 5. File Content Inspection
+        if text.startswith("read file") or text.startswith("cat "):
+             path = text.replace("read file", "").replace("cat ", "").strip()
+             return Intent(action="PLAN", confidence=1.0, reasoning="Direct request to read local file content.")
+
         # --- Memory Context: Retrieve relevant past actions ---
         memory_context = ""
         if self.llm_client and hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client:
             try:
                 # Query memory for relevant past actions (with temporal bias)
+                query_text = str(text)
+                if len(query_text) > 100:
+                    query_text = query_text[:100]
                 recent_actions = self.llm_client.memory_client.query_memory(
-                    f"recent task action {text[:100]}",
+                    f"recent task action {query_text}",
                     limit=2
                 )
                 if recent_actions:
@@ -211,8 +239,12 @@ class DecisionEngine:
             if recent_history:
                 history_lines = []
                 for turn in recent_history:
+                    truncated_user = str(turn.get('user_input', ''))
+                    # Explicit indexing to avoid slice lints
+                    if len(truncated_user) > 50:
+                        truncated_user = truncated_user[:50]
                     history_lines.append(
-                        f"- {turn['user_input'][:50]} → {turn['intent_action']} ({turn['success'] and 'success' or 'failed'})"
+                        f"- {truncated_user} → {turn.get('intent_action', 'UNKNOWN')} ({turn.get('success') and 'success' or 'failed'})"
                     )
                 session_context = f"\n### RECENT CONVERSATION\n" + "\n".join(history_lines) + "\n"
 

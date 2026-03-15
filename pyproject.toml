@@ -15,6 +15,8 @@ dependencies = [
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
+    "pyfiglet>=0.8.post1",
+    "prompt_toolkit>=3.0.0",
 ]
 requires-python = ">=3.10"
 
@@ -25,6 +27,8 @@ ai = [
     "openai>=1.0.0",
     "langchain-google-genai>=0.0.1",
     "langchain-openai>=0.0.1",
+    "groq>=0.9.0",
+    "supermemory>=3.23.0",
 ]
 
 # pip install nexus[browser]  — browser automation (needed for /browse)
@@ -40,6 +44,8 @@ all = [
     "openai>=1.0.0",
     "langchain-google-genai>=0.0.1",
     "langchain-openai>=0.0.1",
+    "groq>=0.9.0",
+    "supermemory>=3.23.0",
     "browser-use>=0.1.0",
     "browser-use-sdk>=0.0.1",
     "playwright>=1.40.0",

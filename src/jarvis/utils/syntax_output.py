@@ -183,3 +183,50 @@ def print_inline_command(
         word_wrap=True, background_color="default",
     )
     console.print(syntax)
+
+
+_EXT_LANG_MAP = {
+    ".py": "python", ".js": "javascript", ".ts": "typescript",
+    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
+    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
+    ".html": "html", ".css": "css", ".xml": "xml",
+    ".sql": "sql", ".md": "markdown", ".rs": "rust",
+    ".go": "go", ".java": "java", ".c": "c", ".cpp": "cpp",
+    ".rb": "ruby", ".php": "php", ".lua": "lua",
+    ".conf": "ini", ".ini": "ini", ".cfg": "ini",
+    ".dockerfile": "dockerfile", ".tf": "hcl",
+}
+
+
+def print_syntax(
+    console: Console,
+    content: str,
+    filepath: str,
+    theme: str = "monokai",
+) -> None:
+    """
+    Print a file's content with syntax highlighting based on its extension.
+
+    Used by the ``nexus read`` CLI command.
+    """
+    import os
+    ext = os.path.splitext(filepath)[1].lower()
+    lang = _EXT_LANG_MAP.get(ext, "text")
+
+    syntax = Syntax(
+        content.strip(),
+        lang,
+        theme=theme,
+        word_wrap=True,
+        background_color="default",
+        line_numbers=content.count("\n") > 8,
+    )
+    console.print(
+        Panel(
+            syntax,
+            title=f"[dim]{filepath}[/dim]",
+            title_align="left",
+            border_style="cyan dim",
+            padding=(0, 1),
+        )
+    )

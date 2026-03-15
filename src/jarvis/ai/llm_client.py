@@ -113,7 +113,7 @@ class GoogleGenAIClient(LLMClient):
                 # Try to extract clean links from grounding metadata
                 # rendered_content contains raw HTML/CSS which is not suitable for TUI
                 sources = []
-                if response.candidates[0].grounding_metadata:
+                if response.candidates and response.candidates[0].grounding_metadata:
                     meta = response.candidates[0].grounding_metadata
                     if meta.grounding_chunks:
                         for chunk in meta.grounding_chunks:

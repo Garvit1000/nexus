@@ -1,16 +1,25 @@
+import re
 from typing import Optional
 from ..core.system_detector import SystemDetector, PackageManager
 from ..core.executor import CommandExecutor
+
+_VALID_PKG_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9.+\-:]+$')
+
 
 class AppInstaller:
     def __init__(self, executor: CommandExecutor, system_detector: SystemDetector):
         self.executor = executor
         self.sys_info = system_detector.get_info()
 
+    @staticmethod
+    def _validate_package_name(name: str) -> bool:
+        return bool(_VALID_PKG_RE.fullmatch(name))
+
     def install(self, package_name: str) -> bool:
-        """
-        Installs a package using the system's package manager.
-        """
+        if not self._validate_package_name(package_name):
+            from rich.console import Console
+            Console().print(f"[red]Error:[/red] Invalid package name: {package_name!r}")
+            return False
         cmd = self._get_install_command(package_name)
         if not cmd:
             import logging; logging.warning(f"Unsupported package manager: {self.sys_info.package_manager}")
@@ -20,9 +29,10 @@ class AppInstaller:
         return return_code == 0
 
     def remove(self, package_name: str) -> bool:
-        """
-        Removes a package.
-        """
+        if not self._validate_package_name(package_name):
+            from rich.console import Console
+            Console().print(f"[red]Error:[/red] Invalid package name: {package_name!r}")
+            return False
         cmd = self._get_remove_command(package_name)
         if not cmd:
             return False

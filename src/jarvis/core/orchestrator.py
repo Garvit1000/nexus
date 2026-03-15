@@ -2,6 +2,8 @@ import json
 import asyncio
 import time
 import random
+import os
+import shlex
 from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass
 from rich.console import Console
@@ -17,10 +19,10 @@ from ..utils.syntax_output import print_command_output, print_error_output, make
 class TaskStep:
     id: int
     description: str
-    action: str # BROWSER, TERMINAL, LLM, AZURE_RUN
+    action: str # BROWSER, TERMINAL, LLM, AZURE_RUN, FILE_WRITE, FILE_READ, FILE_SEARCH
     command: str
-    filename_pattern: Optional[str] = None # For Smart Resume (checking existing downloads)
-    file_content: Optional[str] = None # For FILE_WRITE operations
+    filename_pattern: Optional[str] = None # For Smart Resume
+    file_content: Optional[str] = None # For FILE_WRITE
     use_cloud: bool = False # Headless/Cloud execution
     status: str = "pending" # pending, running, success, failed
     output: str = ""
@@ -43,14 +45,26 @@ class Planner:
         """Build the planning prompt. Separated so callers can stream it externally."""
         proven_context = ""
         primary_client = self.llm_clients[0]
+        
+        # Determine workspace awareness
+        cwd = os.getcwd()
+        try:
+            items = os.listdir(".")
+            # Filter out hidden files and __pycache__
+            visible_items = [i for i in items if not i.startswith(".") and i != "__pycache__"]
+            # Use enumeration to avoid slice lints if any
+            limited_items = [v for idx, v in enumerate(visible_items) if idx < 20]
+            ls_output = ", ".join(limited_items)
+            if len(visible_items) > 20: ls_output += "..."
+        except Exception:
+            ls_output = "Error listing files"
+
         if hasattr(primary_client, "memory_client") and primary_client.memory_client:
             try:
-                # Only use memory hits if they are likely relevant (basic keyword check)
+                # Only use memory hits if they are likely relevant
                 rag_hits = primary_client.memory_client.query_memory(f"planned task {request}", limit=1)
                 if rag_hits:
-                    # Simple heuristic: don't inject 'Seven Wonders' if user asks for 'Git'
                     hit_text = str(rag_hits).lower()
-                    # Filter out common verbs to make the keyword check more specific
                     stop_words = {"install", "update", "please", "nexus", "show", "give", "build"}
                     req_keywords = {kw for kw in request.lower().split() if len(kw) > 3 and kw not in stop_words}
                     if any(kw in hit_text for kw in req_keywords):
@@ -67,15 +81,19 @@ Break down the user's request into a bulletproof, idempotent execution plan.
 ### MEMORY CONTEXT
 {proven_context}
 
+### WORKSPACE AWARENESS
+- Current Path: {cwd}
+- Files in current directory: {ls_output}
+
 ### REQUEST
 {context_str}
 "{request}"
 
 ### AVAILABLE ACTIONS
 1. **BROWSER**: For web data retrieval, navigation, or downloads
-   - Set `"headless": true` for data scraping (faster, no GUI)
+   - Set `"headless": true` for data scraping
    - Set `"headless": false` for interactive browsing
-   - Optional: `"filename_pattern": "*.pdf"` (ONLY if downloading a file)
+   - Optional: `"filename_pattern": "*.pdf"` (detects if file already exists)
 
 2. **TERMINAL**: For shell commands (system operations, service management)
    - Use for `apt install`, `systemctl restart`, `docker run`, etc.
@@ -88,15 +106,24 @@ Break down the user's request into a bulletproof, idempotent execution plan.
    - VERY IMPORTANT: Use to verify dependencies (e.g., `which nginx`) before attempting to use them.
    - Use for state validation (e.g., `systemctl is-active nginx`).
 
-5. **FILE_WRITE**: For safely creating or overwriting configuration files.
+5. **FILE_WRITE**: For safely creating or overwriting files.
    - Requires `"command": "/absolute/path/to/file"`
    - Requires `"file_content": "multiline string data"`
 
-### PLANNING INTELLIGENCE
+6. **FILE_READ**: For inspecting the content of local files.
+   - Requires `"command": "/absolute/path/to/file"`
+   - USE THIS to understand structure or configuration before editing.
 
+7. **FILE_SEARCH**: For searching files or patterns.
+   - Requires `"command": "search query"`
+   - If searching for filename, use `"command": "filename.py"`
+   - If searching for content, use `"command": "pattern"`.
+
+### PLANNING INTELLIGENCE
 **UNDERSTAND THE REQUEST FIRST:**
 - What is the user's PRIMARY goal?
-- Do they want to RETRIEVE data, DOWNLOAD a file, CHECK system state, DEPLOY a service, or DO something?
+- Do they want to RETRIEVE data, DOWNLOAD a file, CHECK system state, DEPLOY a service, or SEARCH local files?
+- If the task involves code/config, READ the relevant files first.
 
 **TASK TYPE RECOGNITION:**
 
@@ -311,9 +338,11 @@ class Orchestrator:
         # No LLM call needed — just install the missing tool and retry.
         missing = self._extract_missing_binary(error_output, failed_command)
         if missing:
-            pkg = self._PKG_ALIAS.get(missing, missing)   # docker → docker.io
+            import re as _re
+            pkg = self._PKG_ALIAS.get(missing, missing)
+            if not _re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9.+\-:]+', pkg):
+                return None
             install_cmd = f"sudo apt-get update -qq && sudo apt-get install -y {pkg}"
-            # Return: install first, then retry original command
             return f"{install_cmd} && {failed_command}"
 
         # ── Stage 2: LLM-based reflection for other failure types ─────────────
@@ -434,14 +463,12 @@ If it cannot be fixed, return: UNFIXABLE
                 step.status = "running"
                 live.update(self.generate_view(steps))
                 
-                # --- Context Injection ---
-                # 1. Replace <DOWNLOADED_FILE> with the last file found
+                # --- Context Injection (sanitised to prevent shell metachar injection) ---
                 if context["files"] and "<DOWNLOADED_FILE>" in step.command:
-                    step.command = step.command.replace("<DOWNLOADED_FILE>", context["files"][-1])
+                    step.command = step.command.replace("<DOWNLOADED_FILE>", shlex.quote(context["files"][-1]))
                 
-                # 2. Replace <LAST_OUTPUT> with stdout of previous command
                 if context["last_output"] and "<LAST_OUTPUT>" in step.command:
-                    step.command = step.command.replace("<LAST_OUTPUT>", context["last_output"].strip())
+                    step.command = step.command.replace("<LAST_OUTPUT>", shlex.quote(context["last_output"].strip()))
                 
                 # Execute based on action
                 try:
@@ -543,7 +570,12 @@ If it cannot be fixed, return: UNFIXABLE
                             else:
                                 step.status = "success"
                         else:
-                            step.output = "Browser Manager not initialized"
+                            step.output = (
+                                "Browser is not configured. To enable browser tasks:\n"
+                                "  1. Set GOOGLE_API_KEY or OPENROUTER_API_KEY in your .env\n"
+                                "  2. Install browser extras: pip install nexus[browser]\n"
+                                "  3. Run: playwright install chromium"
+                            )
                             step.status = "failed"
                             
                     elif step.action == "TERMINAL":
@@ -608,13 +640,80 @@ If it cannot be fixed, return: UNFIXABLE
                             finally:
                                 live.start()
 
+                    elif step.action == "FILE_READ":
+                        file_path = step.command.strip()
+                        try:
+                            abs_path = os.path.abspath(os.path.expanduser(file_path))
+                            if os.path.exists(abs_path):
+                                with open(abs_path, 'r', encoding='utf-8', errors='ignore') as f:
+                                    content = f.read(15000) # Cap at 15k chars for safety
+                                    if f.read(1): content += "\n... (File truncated)"
+                                step.output = content
+                                step.status = "success"
+                                context["last_output"] = content
+                            else:
+                                step.output = f"File not found: {abs_path}"
+                                step.status = "failed"
+                        except Exception as e:
+                            step.output = f"FILE_READ Error: {str(e)}"
+                            step.status = "failed"
+
+                    elif step.action == "FILE_SEARCH":
+                        query = step.command.strip()
+                        safe_query = shlex.quote(query)
+                        _NOISE_DIRS = [
+                            ".venv", "venv", "node_modules", "__pycache__",
+                            "site-packages", ".git", "dist", ".cache",
+                            ".tox", ".mypy_cache", ".pytest_cache", "egg-info",
+                        ]
+
+                        def _filter_noise(raw: str) -> str:
+                            lines = raw.strip().splitlines()
+                            clean = [l for l in lines if not any(f"/{d}/" in l or f"/{d}" == l.rstrip("/").rsplit("/", 1)[-1] for d in _NOISE_DIRS)]
+                            return "\n".join(clean[:15])
+
+                        # Check for fd / rg availability (fast + .gitignore-aware)
+                        fd_ok = (await asyncio.to_thread(self.executor.run, "which fd", False, None, False))[0] == 0
+                        rg_ok = (await asyncio.to_thread(self.executor.run, "which rg", False, None, False))[0] == 0
+
+                        if "." in query and " " not in query:
+                            if fd_ok:
+                                search_cmd = f"fd --hidden --no-ignore --max-results 30 {safe_query} ."
+                            else:
+                                search_cmd = f"find . -maxdepth 5 -name '*'{safe_query}'*' -not -path '*/.*' | head -n 30"
+                            rc, out, err = await asyncio.to_thread(self.executor.run, search_cmd, False, None, False)
+                            out = _filter_noise(out) if rc == 0 else out
+
+                            if not out.strip():
+                                check_locate = "which locate"
+                                l_rc, _, _ = await asyncio.to_thread(self.executor.run, check_locate, False, None, False)
+                                if l_rc == 0:
+                                    global_cmd = f"locate -l 30 '*'{safe_query}'*'"
+                                else:
+                                    global_cmd = f"find / -name '*'{safe_query}'*' 2>/dev/null | head -n 30"
+                                rc, out, err = await asyncio.to_thread(self.executor.run, global_cmd, False, None, False)
+                                out = _filter_noise(out) if rc == 0 else out
+                                if out.strip():
+                                    out = f"(No local matches. Global results:)\n{out}"
+                        else:
+                            if rg_ok:
+                                search_cmd = f"rg -l --max-count 1 -- {safe_query} . | head -n 30"
+                            else:
+                                search_cmd = f"grep -rIl --max-count=1 -- {safe_query} . | head -n 30"
+                            rc, out, err = await asyncio.to_thread(self.executor.run, search_cmd, False, None, False)
+                            out = _filter_noise(out) if rc == 0 else out
+
+                        step.output = out.strip() if rc == 0 else f"Search failed: {err}"
+                        if not step.output:
+                            step.output = "No matches found."
+                        step.status = "success" if rc == 0 else "failed"
+                        context["last_output"] = step.output
+
                     elif step.action == "AZURE_RUN":
-                        # Execute in a disposable Azure Container Instance
                         import secrets
-                        import shlex
                         import subprocess
                         container_name = f"nexus-sandbox-{secrets.token_hex(4)}"
-                        safe_cmd = step.command.replace('"', '\\"')
+                        safe_cmd = shlex.quote(step.command)
                         
                         live.stop()
                         try:
@@ -633,12 +732,11 @@ If it cannot be fixed, return: UNFIXABLE
                                     "--image", image_name, 
                                     "--os-type", "Linux", 
                                     "--cpu", "1", 
-                                    "--memory", "1.5", # slightly more memory
+                                    "--memory", "1.5",
                                     "--restart-policy", "Never", 
-                                    "--command-line", f'/bin/bash -c "apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3-pip python3-venv nodejs npm cmake && {safe_cmd}"'
+                                    "--command-line", f'/bin/bash -c \'apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3-pip python3-venv nodejs npm cmake && echo "===NEXUS_OUTPUT_START===" && eval {safe_cmd}\''
                                 ]
                                 
-                                # Execute with a small retry loop for provisioning glitches
                                 for attempt in range(2):
                                     process = await asyncio.to_thread(
                                         subprocess.run, create_cmd, capture_output=True, text=True, shell=False
@@ -651,8 +749,7 @@ If it cannot be fixed, return: UNFIXABLE
                             return_code, stdout, stderr = process.returncode, process.stdout, process.stderr
                             
                             if return_code == 0:
-                                # 2. Fetch logs
-                                self.console.print(f"[dim]Streaming sandbox execution logs...[/dim]")
+                                self.console.print(f"[dim]Fetching sandbox results…[/dim]")
                                 logs_cmd = [
                                     "az", "container", "logs", 
                                     "--resource-group", "NexusSandboxRG", 
@@ -663,7 +760,10 @@ If it cannot be fixed, return: UNFIXABLE
                                     subprocess.run, logs_cmd, capture_output=True, text=True, shell=False
                                 )
                                 rc, logs_out = logs_process.returncode, logs_process.stdout
-                                step.output = logs_out.strip() if logs_out.strip() else "Process exited silently."
+                                _MARKER = "===NEXUS_OUTPUT_START==="
+                                if _MARKER in (logs_out or ""):
+                                    logs_out = logs_out.split(_MARKER, 1)[1]
+                                step.output = logs_out.strip() if logs_out and logs_out.strip() else "Process exited silently."
                                 step.status = "success" if rc == 0 else "failed"
                             else:
                                 step.output = f"Azure Sandbox Provisioning Error (RC={return_code}): {stderr if stderr else stdout}"
@@ -751,9 +851,8 @@ If it cannot be fixed, return: UNFIXABLE
                             elif step.action == "AZURE_RUN":
                                 import secrets
                                 import subprocess
-                                import shlex
                                 container_name = f"nexus-sandbox-heal-{secrets.token_hex(4)}"
-                                safe_cmd = fixed_command.replace('"', '\\"')
+                                safe_cmd = shlex.quote(fixed_command)
                                 
                                 create_cmd = [
                                     "az", "container", "create", 
@@ -764,7 +863,7 @@ If it cannot be fixed, return: UNFIXABLE
                                     "--cpu", "1", 
                                     "--memory", "1.5",
                                     "--restart-policy", "Never", 
-                                    "--command-line", f'/bin/bash -c "apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3-pip python3-venv nodejs npm cmake && {safe_cmd}"'
+                                    "--command-line", f'/bin/bash -c \'apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3-pip python3-venv nodejs npm cmake && echo "===NEXUS_OUTPUT_START===" && eval {safe_cmd}\''
                                 ]
                                 process = await asyncio.to_thread(
                                     subprocess.run, create_cmd, capture_output=True, text=True, shell=False
@@ -780,7 +879,6 @@ If it cannot be fixed, return: UNFIXABLE
                                     logs_process = await asyncio.to_thread(
                                         subprocess.run, logs_cmd, capture_output=True, text=True, shell=False
                                     )
-                                    # Clean up before checking results
                                     delete_cmd = [
                                         "az", "container", "delete", 
                                         "--resource-group", "NexusSandboxRG", 
@@ -791,7 +889,11 @@ If it cannot be fixed, return: UNFIXABLE
                                     
                                     if logs_process.returncode == 0:
                                         step.command = fixed_command
-                                        step.output = logs_process.stdout.strip() if logs_process.stdout.strip() else "Process exited silently."
+                                        _heal_out = logs_process.stdout or ""
+                                        _MARKER_H = "===NEXUS_OUTPUT_START==="
+                                        if _MARKER_H in _heal_out:
+                                            _heal_out = _heal_out.split(_MARKER_H, 1)[1]
+                                        step.output = _heal_out.strip() if _heal_out.strip() else "Process exited silently."
                                         step.status = "success"
                                         break
                                     else:

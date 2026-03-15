@@ -48,6 +48,7 @@ class SessionManager:
     def __init__(self, max_history: int = 50):
         self.history: List[SessionTurn] = []
         self.max_history = max_history
+        self.cached_results: Dict[str, Any] = {}
         
     def add_turn(self, user_input: str, intent_action: str, intent_reasoning: str, 
                  result: Optional[str] = None, success: bool = True) -> None:

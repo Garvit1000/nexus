@@ -74,6 +74,10 @@ class ConfigManager:
     def save_config(self):
         with open(self.config_file, "w") as f:
             json.dump(asdict(self.config), f, indent=4)
+        try:
+            os.chmod(self.config_file, 0o600)
+        except OSError:
+            pass
 
     def update(self, **kwargs):
         for key, value in kwargs.items():
