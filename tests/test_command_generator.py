@@ -10,7 +10,7 @@ Verifies that:
 """
 
 import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 from jarvis.ai.command_generator import CommandGenerator
 from jarvis.core.security import SecurityViolation
 from jarvis.core.system_detector import SystemInfo, PackageManager
@@ -24,7 +24,9 @@ def _mock_llm(response: str = "echo hello", memory_client=None):
 
 
 def _sys_info():
-    return SystemInfo(os_name="Ubuntu", os_version="24.04", package_manager=PackageManager.APT)
+    return SystemInfo(
+        os_name="Ubuntu", os_version="24.04", package_manager=PackageManager.APT
+    )
 
 
 class TestCommandGeneration:

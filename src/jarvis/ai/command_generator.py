@@ -1,7 +1,7 @@
-import json
 from .llm_client import LLMClient
 from ..core.system_detector import SystemInfo
 from ..core.security import SafetyCheck, SecurityViolation
+
 
 class CommandGenerator:
     def __init__(self, llm_client: LLMClient, system_info: SystemInfo):
@@ -24,13 +24,13 @@ class CommandGenerator:
                 f"LLM generated an unsafe command: {e}. "
                 f"Original request: '{user_request}'"
             )
-        
+
         if self.llm.memory_client:
             self.llm.memory_client.add_memory(
                 content=f"User requested: '{user_request}'. Nexus generated: '{command}'",
-                metadata={"type": "command_generation", "os": self.system_info.os_name}
+                metadata={"type": "command_generation", "os": self.system_info.os_name},
             )
-            
+
         return command
 
     def _build_prompt(self, request: str) -> str:
@@ -38,7 +38,9 @@ class CommandGenerator:
         memory_context = ""
         if self.llm.memory_client:
             # tailored query
-            rag_hits = self.llm.memory_client.query_memory(f"feedback {request}", limit=3)
+            rag_hits = self.llm.memory_client.query_memory(
+                f"feedback {request}", limit=3
+            )
             if rag_hits:
                 memory_context = f"\n### PROVEN SOLUTIONS (FROM MEMORY)\n{rag_hits}\n"
 
@@ -81,5 +83,5 @@ You have access to a persistent memory stream.{memory_context}
             cleaned = cleaned.split("\n", 1)[1]
         if cleaned.endswith("```"):
             cleaned = cleaned.rsplit("\n", 1)[0]
-        cleaned = cleaned.replace("`", "") # Remove inline code ticks if any
+        cleaned = cleaned.replace("`", "")  # Remove inline code ticks if any
         return cleaned.strip()

@@ -9,9 +9,8 @@ Verifies that:
 - SessionManager context causes SHOW_CACHED to be returned when appropriate
 """
 
-import pytest
 from unittest.mock import MagicMock
-from jarvis.ai.decision_engine import DecisionEngine, Intent
+from jarvis.ai.decision_engine import DecisionEngine
 
 
 def _engine(router_response: str = "", session_manager=None) -> DecisionEngine:
@@ -72,13 +71,16 @@ class TestSlowPathLLM:
     def _make_llm_intent_response(self, action="CHAT") -> str:
         """Return a valid JSON string the router would produce."""
         import json
-        return json.dumps({
-            "action": action,
-            "command": None,
-            "args": None,
-            "confidence": 0.85,
-            "reasoning": "LLM classified this as " + action
-        })
+
+        return json.dumps(
+            {
+                "action": action,
+                "command": None,
+                "args": None,
+                "confidence": 0.85,
+                "reasoning": "LLM classified this as " + action,
+            }
+        )
 
     def test_ambiguous_input_calls_router(self):
         router_resp = self._make_llm_intent_response("CHAT")
@@ -102,7 +104,7 @@ class TestSessionContextAwareness:
         session_mgr.get_context_for_decision.return_value = {
             "last_result": "some_output",
             "last_action": "COMMAND",
-            "age_seconds": 5
+            "age_seconds": 5,
         }
         engine = _engine(session_manager=session_mgr)
         intent = engine.analyze("what was that?")

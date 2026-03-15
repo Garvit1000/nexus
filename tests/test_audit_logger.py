@@ -18,6 +18,7 @@ from jarvis.core.audit_logger import AuditLogger
 def isolated_logger(tmp_path):
     """Create an AuditLogger pointing at a temp file, reset handler state."""
     import logging
+
     # Remove any existing handlers for this logger name to avoid cross-test contamination
     logger = logging.getLogger("nexus.audit")
     logger.handlers.clear()
@@ -39,7 +40,9 @@ class TestAuditLogCreation:
 class TestAuditLogEntries:
     def test_successful_command_is_logged(self, isolated_logger):
         logger, log_path = isolated_logger
-        logger.log("echo hello", return_code=0, user_confirmed=True, stdout="hello", stderr="")
+        logger.log(
+            "echo hello", return_code=0, user_confirmed=True, stdout="hello", stderr=""
+        )
         content = open(log_path).read()
         assert "STATUS=OK" in content
         assert "echo hello" in content
@@ -47,7 +50,13 @@ class TestAuditLogEntries:
 
     def test_failed_command_is_logged_with_fail_status(self, isolated_logger):
         logger, log_path = isolated_logger
-        logger.log("bad_command", return_code=1, user_confirmed=True, stdout="", stderr="not found")
+        logger.log(
+            "bad_command",
+            return_code=1,
+            user_confirmed=True,
+            stdout="",
+            stderr="not found",
+        )
         content = open(log_path).read()
         assert "STATUS=FAIL(1)" in content
         assert "bad_command" in content
@@ -60,7 +69,13 @@ class TestAuditLogEntries:
 
     def test_stdout_excerpt_is_included(self, isolated_logger):
         logger, log_path = isolated_logger
-        logger.log("cat file", return_code=0, user_confirmed=True, stdout="file contents here", stderr="")
+        logger.log(
+            "cat file",
+            return_code=0,
+            user_confirmed=True,
+            stdout="file contents here",
+            stderr="",
+        )
         content = open(log_path).read()
         assert "file contents here" in content
 
@@ -75,5 +90,5 @@ class TestAuditLogEntries:
         logger, log_path = isolated_logger
         logger.log("echo one", return_code=0, user_confirmed=True)
         logger.log("echo two", return_code=0, user_confirmed=True)
-        lines = [l for l in open(log_path).readlines() if l.strip()]
+        lines = [line for line in open(log_path).readlines() if line.strip()]
         assert len(lines) == 2

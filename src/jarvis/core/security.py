@@ -14,14 +14,16 @@ from dataclasses import dataclass
 class SecurityViolation(Exception):
     pass
 
+
 @dataclass
 class ValidationResult:
     """Result of command validation."""
+
     is_valid: bool
     reasoning: str
     sanitized_command: Optional[str] = None
     warnings: Optional[List[str]] = None
-    
+
     def __post_init__(self):
         if self.warnings is None:
             self.warnings = []
@@ -30,173 +32,167 @@ class ValidationResult:
 class CommandValidator:
     """
     Validates commands before execution.
-    
+
     Checks for:
     - Syntax errors
     - Dangerous patterns
     - Invalid shell constructs
     - Proper escaping
     """
-    
+
     # Dangerous patterns that should trigger warnings
     DANGEROUS_PATTERNS = [
-        (r'rm\s+-rf\s+/', "Recursive delete on root directory"),
-        (r'dd\s+if=/dev/(zero|urandom)\s+of=/dev/sd', "Disk wipe operation"),
-        (r':\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:', "Fork bomb pattern"),
-        (r'mkfs\.', "Filesystem format operation"),
-        (r'chmod\s+-R\s+777', "Overly permissive recursive chmod"),
-        (r'wget.*\|\s*bash', "Piping download directly to bash"),
-        (r'curl.*\|\s*sh', "Piping download directly to shell"),
-        (r'eval\s+\$\(', "Eval with command substitution"),
+        (r"rm\s+-rf\s+/", "Recursive delete on root directory"),
+        (r"dd\s+if=/dev/(zero|urandom)\s+of=/dev/sd", "Disk wipe operation"),
+        (r":\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:", "Fork bomb pattern"),
+        (r"mkfs\.", "Filesystem format operation"),
+        (r"chmod\s+-R\s+777", "Overly permissive recursive chmod"),
+        (r"wget.*\|\s*bash", "Piping download directly to bash"),
+        (r"curl.*\|\s*sh", "Piping download directly to shell"),
+        (r"eval\s+\$\(", "Eval with command substitution"),
     ]
-    
+
     # Patterns that are always blocked
     BLOCKED_PATTERNS = [
-        (r'rm\s+-rf\s+/\s*$', "Attempting to delete root directory"),
-        (r':\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:', "Fork bomb detected"),
+        (r"rm\s+-rf\s+/\s*$", "Attempting to delete root directory"),
+        (r":\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:", "Fork bomb detected"),
     ]
-    
+
     def __init__(self):
         self.strict_mode = False
-    
+
     def validate(self, command: str, strict: bool = False) -> ValidationResult:
         """
         Validate a command.
-        
+
         Args:
             command: The command string to validate
             strict: If True, applies stricter validation rules
-            
+
         Returns:
             ValidationResult with validation status
         """
         if not command or not command.strip():
-            return ValidationResult(
-                is_valid=False,
-                reasoning="Empty command"
-            )
-        
+            return ValidationResult(is_valid=False, reasoning="Empty command")
+
         command = command.strip()
         warnings = []
-        
+
         # Check for blocked patterns
         for pattern, reason in self.BLOCKED_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
-                return ValidationResult(
-                    is_valid=False,
-                    reasoning=f"Blocked: {reason}"
-                )
-        
+                return ValidationResult(is_valid=False, reasoning=f"Blocked: {reason}")
+
         # Check for dangerous patterns
         for pattern, reason in self.DANGEROUS_PATTERNS:
             if re.search(pattern, command, re.IGNORECASE):
                 warnings.append(f"Warning: {reason}")
-        
+
         # Check syntax
         syntax_valid, syntax_msg = self._check_syntax(command)
         if not syntax_valid:
             return ValidationResult(
-                is_valid=False,
-                reasoning=f"Syntax error: {syntax_msg}"
+                is_valid=False, reasoning=f"Syntax error: {syntax_msg}"
             )
-        
+
         # Check for suspicious characteristics
         suspicious = self._check_suspicious(command)
         warnings.extend(suspicious)
-        
+
         # If strict mode and warnings exist, fail
         if strict and warnings:
             return ValidationResult(
                 is_valid=False,
                 reasoning=f"Strict mode: {', '.join(warnings)}",
-                warnings=warnings
+                warnings=warnings,
             )
-        
+
         return ValidationResult(
             is_valid=True,
             reasoning="Command validated successfully",
             sanitized_command=command,
-            warnings=warnings
+            warnings=warnings,
         )
-    
+
     def _check_syntax(self, command: str) -> Tuple[bool, str]:
         """
         Check basic shell syntax.
-        
+
         Returns:
             (is_valid, error_message)
         """
         # Check for mismatched quotes
         single_quotes = command.count("'")
         double_quotes = command.count('"')
-        
+
         if single_quotes % 2 != 0:
             return False, "Mismatched single quotes"
         if double_quotes % 2 != 0:
             return False, "Mismatched double quotes"
-        
+
         # Check for unbalanced parentheses/braces
-        if command.count('(') != command.count(')'):
+        if command.count("(") != command.count(")"):
             return False, "Unbalanced parentheses"
-        if command.count('{') != command.count('}'):
+        if command.count("{") != command.count("}"):
             return False, "Unbalanced braces"
-        if command.count('[') != command.count(']'):
+        if command.count("[") != command.count("]"):
             return False, "Unbalanced brackets"
-        
+
         # Try to parse with shlex (basic check)
         try:
             # Only parse if no shell operators (which shlex can't handle)
-            if not any(op in command for op in ['&&', '||', '|', '>', '<', ';']):
+            if not any(op in command for op in ["&&", "||", "|", ">", "<", ";"]):
                 shlex.split(command)
         except ValueError as e:
             return False, f"Parse error: {str(e)}"
-        
+
         return True, ""
-    
+
     def _check_suspicious(self, command: str) -> List[str]:
         """
         Check for suspicious patterns that aren't necessarily blocked.
-        
+
         Returns:
             List of warning messages
         """
         warnings = []
-        
+
         # Check for command obfuscation
-        if re.search(r'\$\{.*\}|\$\(.*\)', command):
+        if re.search(r"\$\{.*\}|\$\(.*\)", command):
             # Command substitution is common, only warn if nested or complex
-            nesting_level = command.count('$(')
+            nesting_level = command.count("$(")
             if nesting_level > 2:
                 warnings.append("Complex nested command substitution detected")
-        
+
         # Check for base64 encoding (common in attacks)
-        if 'base64' in command.lower() and '|' in command:
+        if "base64" in command.lower() and "|" in command:
             warnings.append("Base64 decode piped to execution")
-        
+
         # Check for hex/octal encoding
-        if re.search(r'\\x[0-9a-f]{2}|\\[0-7]{3}', command):
+        if re.search(r"\\x[0-9a-f]{2}|\\[0-7]{3}", command):
             warnings.append("Hex or octal encoding detected")
-        
+
         # Check for multiple chained commands
-        chain_count = command.count('&&') + command.count('||') + command.count(';')
+        chain_count = command.count("&&") + command.count("||") + command.count(";")
         if chain_count > 5:
             warnings.append(f"Excessive command chaining ({chain_count} operators)")
-        
+
         # Check for downloads to executable locations
-        if any(pattern in command.lower() for pattern in ['wget', 'curl']) and \
-           any(loc in command for loc in ['/usr/bin', '/bin', '/sbin', '/usr/local/bin']):
+        if any(pattern in command.lower() for pattern in ["wget", "curl"]) and any(
+            loc in command for loc in ["/usr/bin", "/bin", "/sbin", "/usr/local/bin"]
+        ):
             warnings.append("Download to system executable directory")
-        
+
         return warnings
-    
+
     def suggest_fix(self, command: str, error: str) -> Optional[str]:
         """
         Attempt to suggest a fix for an invalid command.
-        
+
         Args:
             command: The invalid command
             error: The validation error message
-            
+
         Returns:
             Suggested fixed command, or None if can't fix
         """
@@ -206,12 +202,13 @@ class CommandValidator:
                 return command + "'"
             elif error.startswith("Mismatched double"):
                 return command + '"'
-        
+
         # More sophisticated fixes could be added here
         return None
 
 
 validator = CommandValidator()
+
 
 class SafetyCheck:
     @classmethod
@@ -222,7 +219,9 @@ class SafetyCheck:
         """
         result = validator.validate(command, strict=True)
         if not result.is_valid:
-            raise SecurityViolation(f"Command blocked by safety filter: {result.reasoning}")
+            raise SecurityViolation(
+                f"Command blocked by safety filter: {result.reasoning}"
+            )
         return True
 
     @classmethod
@@ -230,12 +229,21 @@ class SafetyCheck:
         """
         Heuristic to check if a command likely needs sudo.
         """
-        privileged_commands = ["apt", "dnf", "pacman", "systemctl", "mount", "umount", "chown", "chmod"]
+        privileged_commands = [
+            "apt",
+            "dnf",
+            "pacman",
+            "systemctl",
+            "mount",
+            "umount",
+            "chown",
+            "chmod",
+        ]
         first_word = command.split()[0] if command else ""
-        
+
         if first_word in privileged_commands:
             return True
-            
+
         # Cloud CLIs manage their own authentication and MUST NOT be run with sudo,
         # otherwise they lose the local user's ~/.azure/ credential cache.
         if first_word in ["az", "aws", "gcloud"]:
@@ -243,6 +251,6 @@ class SafetyCheck:
 
         # Check for writes to system directories
         if " /etc/" in command or " /usr/" in command or " /var/" in command:
-             return True
-             
+            return True
+
         return False

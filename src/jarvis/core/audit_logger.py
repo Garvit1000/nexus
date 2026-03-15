@@ -6,7 +6,6 @@ Log is stored at ~/.nexus/audit.log
 """
 
 import os
-import time
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +15,7 @@ from typing import Optional
 class AuditLogger:
     """
     Logs every Nexus-executed command to a persistent audit file.
-    
+
     Each entry includes:
     - ISO timestamp
     - The executed command
@@ -49,6 +48,7 @@ class AuditLogger:
             os.chmod(log_file, 0o600)
         except OSError as e:
             import sys
+
             print(
                 f"Warning: could not set secure permissions on audit log: {log_file} — {e}",
                 file=sys.stderr,
@@ -64,7 +64,7 @@ class AuditLogger:
     ) -> None:
         """
         Write a single command execution entry to the audit log.
-        
+
         Args:
             command: The shell command that was run.
             return_code: The exit code of the command.
@@ -78,9 +78,7 @@ class AuditLogger:
         stdout_excerpt = stdout[:200].replace("\n", " ").strip()
         stderr_excerpt = stderr[:200].replace("\n", " ").strip()
 
-        entry = (
-            f"[{ts}] STATUS={status} CONFIRMED={confirmed_str} | CMD={command!r}"
-        )
+        entry = f"[{ts}] STATUS={status} CONFIRMED={confirmed_str} | CMD={command!r}"
         if stdout_excerpt:
             entry += f" | OUT={stdout_excerpt!r}"
         if stderr_excerpt:
@@ -91,6 +89,4 @@ class AuditLogger:
     def log_skipped(self, command: str, reason: str) -> None:
         """Log that a command was skipped (dry run / user rejected)."""
         ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        self.logger.info(
-            f"[{ts}] STATUS=SKIPPED REASON={reason!r} | CMD={command!r}"
-        )
+        self.logger.info(f"[{ts}] STATUS=SKIPPED REASON={reason!r} | CMD={command!r}")

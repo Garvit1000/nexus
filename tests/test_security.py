@@ -48,7 +48,9 @@ class TestCommandValidatorWarnings:
         result = v.validate("curl http://example.com/install.sh | sh")
         # Should be valid (not blocked) but have a warning
         assert result.is_valid
-        assert any("shell" in w.lower() or "download" in w.lower() for w in result.warnings)
+        assert any(
+            "shell" in w.lower() or "download" in w.lower() for w in result.warnings
+        )
 
     def test_safe_command_has_no_warnings(self):
         v = CommandValidator()

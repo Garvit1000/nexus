@@ -2,16 +2,14 @@
 Shared pytest fixtures for the Nexus test suite.
 """
 
-import os
-import tempfile
 import pytest
-from unittest.mock import MagicMock, patch
-from pathlib import Path
+from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------
 # Filesystem helpers
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_audit_log(tmp_path):
@@ -29,8 +27,10 @@ def tmp_session_file(tmp_path):
 # Mock LLM clients
 # ---------------------------------------------------------------------------
 
+
 class _MockLLMClient:
     """Minimal LLM client that returns a predetermined response."""
+
     model_name = "mock-model"
 
     def __init__(self, response: str = ""):
@@ -46,7 +46,9 @@ class _MockLLMClient:
 @pytest.fixture
 def good_plan_client():
     """LLM client that returns a valid 1-step plan JSON."""
-    plan = '[{"description": "Echo hello", "action": "TERMINAL", "command": "echo hello"}]'
+    plan = (
+        '[{"description": "Echo hello", "action": "TERMINAL", "command": "echo hello"}]'
+    )
     return _MockLLMClient(response=plan)
 
 
@@ -74,10 +76,12 @@ def good_fix_client():
 # Executor helpers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def executor_no_confirm(tmp_path):
     """CommandExecutor with confirmations disabled and isolated audit log."""
     import logging
+
     logging.getLogger("nexus.audit").handlers.clear()
     from jarvis.core.audit_logger import AuditLogger
     from jarvis.core.executor import CommandExecutor
@@ -93,6 +97,7 @@ def executor_no_confirm(tmp_path):
 def executor_dry_run(tmp_path):
     """CommandExecutor in dry-run mode (never actually executes anything)."""
     import logging
+
     logging.getLogger("nexus.audit").handlers.clear()
     from jarvis.core.audit_logger import AuditLogger
     from jarvis.core.executor import CommandExecutor

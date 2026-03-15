@@ -4,17 +4,20 @@ from enum import Enum
 from dataclasses import dataclass
 from typing import Optional
 
+
 class PackageManager(Enum):
     APT = "apt"
     DNF = "dnf"
     PACMAN = "pacman"
     UNKNOWN = "unknown"
 
+
 @dataclass
 class SystemInfo:
     os_name: str
     os_version: str
     package_manager: PackageManager
+
 
 class SystemDetector:
     def __init__(self):
@@ -29,9 +32,7 @@ class SystemDetector:
         pm = self._detect_package_manager()
 
         self._info = SystemInfo(
-            os_name=os_name,
-            os_version=os_version,
-            package_manager=pm
+            os_name=os_name, os_version=os_version, package_manager=pm
         )
         return self._info
 
@@ -43,7 +44,7 @@ class SystemDetector:
             return PackageManager.DNF
         elif shutil.which("pacman"):
             return PackageManager.PACMAN
-        
+
         # Fallback to distro ID checks if binaries are ambiguous or missing
         dist_id = distro.id()
         if dist_id in ["ubuntu", "debian", "pop", "linuxmint"]:
@@ -52,5 +53,5 @@ class SystemDetector:
             return PackageManager.DNF
         elif dist_id in ["arch", "manjaro", "endeavouros"]:
             return PackageManager.PACMAN
-            
+
         return PackageManager.UNKNOWN

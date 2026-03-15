@@ -11,11 +11,10 @@ Verifies that:
 - execute_plan returns failure when plan is empty
 """
 
-import pytest
 import asyncio
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 from rich.console import Console
-from jarvis.core.orchestrator import Orchestrator, TaskStep, OrchestratorResult
+from jarvis.core.orchestrator import Orchestrator, TaskStep
 
 
 def _mock_orchestrator(llm_response="UNFIXABLE"):
@@ -60,9 +59,7 @@ class TestExtractMissingBinary:
 
     def test_no_match_returns_none(self):
         orch = _mock_orchestrator()
-        binary = orch._extract_missing_binary(
-            "permission denied", "ls /root"
-        )
+        binary = orch._extract_missing_binary("permission denied", "ls /root")
         assert binary is None
 
     def test_fallback_first_token(self):
@@ -127,7 +124,9 @@ class TestGenerateView:
     def test_table_has_four_columns(self):
         orch = _mock_orchestrator()
         steps = [
-            TaskStep(id=1, description="Test step", action="TERMINAL", command="echo hi"),
+            TaskStep(
+                id=1, description="Test step", action="TERMINAL", command="echo hi"
+            ),
         ]
         table = orch.generate_view(steps)
         assert len(table.columns) == 4
@@ -135,8 +134,16 @@ class TestGenerateView:
     def test_table_contains_step_data(self):
         orch = _mock_orchestrator()
         steps = [
-            TaskStep(id=1, description="Echo hello", action="TERMINAL", command="echo hello"),
-            TaskStep(id=2, description="Check status", action="CHECK", command="which docker", status="success"),
+            TaskStep(
+                id=1, description="Echo hello", action="TERMINAL", command="echo hello"
+            ),
+            TaskStep(
+                id=2,
+                description="Check status",
+                action="CHECK",
+                command="which docker",
+                status="success",
+            ),
         ]
         table = orch.generate_view(steps)
         assert table.row_count == 2
@@ -159,7 +166,9 @@ class TestExecutePlan:
         mock_confirm_cls.ask.return_value = False
         orch = _mock_orchestrator()
         steps = [
-            TaskStep(id=1, description="Echo test", action="TERMINAL", command="echo test"),
+            TaskStep(
+                id=1, description="Echo test", action="TERMINAL", command="echo test"
+            ),
         ]
         result = asyncio.run(orch.execute_plan(steps, require_confirmation=True))
         assert "cancelled" in result.output.lower()
@@ -168,7 +177,9 @@ class TestExecutePlan:
         orch = _mock_orchestrator()
         orch.executor.run.return_value = (0, "hello", "")
         steps = [
-            TaskStep(id=1, description="Echo hello", action="TERMINAL", command="echo hello"),
+            TaskStep(
+                id=1, description="Echo hello", action="TERMINAL", command="echo hello"
+            ),
         ]
         result = asyncio.run(orch.execute_plan(steps, require_confirmation=False))
         assert result.success is True

@@ -10,9 +10,7 @@ Design principles:
 """
 
 import asyncio
-import sys
-import inspect
-from typing import Optional, TYPE_CHECKING, List, Dict, Any, Tuple, cast
+from typing import Optional, TYPE_CHECKING, cast
 
 from rich.console import Console
 from rich.live import Live
@@ -33,18 +31,20 @@ from ..ai.decision_engine import DecisionEngine, Intent
 
 
 # ── Colour palette ────────────────────────────────────────────────────────────
-ACCENT   = "cyan"
-DIM      = "dim"
-SUCCESS  = "green"
-ERROR    = "red"
-WARN     = "yellow"
-NEUTRAL  = "white"
+ACCENT = "cyan"
+DIM = "dim"
+SUCCESS = "green"
+ERROR = "red"
+WARN = "yellow"
+NEUTRAL = "white"
 
 # ── Prompt style ──────────────────────────────────────────────────────────────
-_PROMPT_STYLE = PromptStyle.from_dict({
-    "prompt": "#00d7ff bold",   # bright cyan
-    "": "#ffffff",              # input text
-})
+_PROMPT_STYLE = PromptStyle.from_dict(
+    {
+        "prompt": "#00d7ff bold",  # bright cyan
+        "": "#ffffff",  # input text
+    }
+)
 
 
 class NexusApp:
@@ -70,9 +70,12 @@ class NexusApp:
         self.app_installer = app_installer
 
         from ..core.persistent_session_manager import PersistentSessionManager
+
         self.session_manager = PersistentSessionManager(max_history=50)
 
-        self.decision_engine = DecisionEngine(llm_client, router_client, self.session_manager)
+        self.decision_engine = DecisionEngine(
+            llm_client, router_client, self.session_manager
+        )
         self.orchestrator = None
 
         self.last_action_result: Optional[str] = None
@@ -99,8 +102,8 @@ class NexusApp:
             )
         )
         self.console.print(
-            f"  [dim]Type your request or [cyan]/help[/cyan] for commands  ·  "
-            f"[cyan]/exit[/cyan] to quit[/dim]\n"
+            "  [dim]Type your request or [cyan]/help[/cyan] for commands  ·  "
+            "[cyan]/exit[/cyan] to quit[/dim]\n"
         )
 
     # ── REPL ──────────────────────────────────────────────────────────────────
@@ -135,21 +138,21 @@ class NexusApp:
     # ── Input dispatch ────────────────────────────────────────────────────────
 
     async def _handle_input(self, text: str):
-        self.console.print()   # breathing room
+        self.console.print()  # breathing room
 
         if text.startswith("/"):
             await self._handle_command(text)
         else:
             await self._handle_chat(text)
 
-        self.console.print()   # breathing room after response
+        self.console.print()  # breathing room after response
 
     # ── Slash commands ────────────────────────────────────────────────────────
 
     async def _handle_command(self, text: str) -> bool:
-        parts   = text.split(" ", 1)
+        parts = text.split(" ", 1)
         command = parts[0].lower()
-        args    = parts[1].strip() if len(parts) > 1 else ""
+        args = parts[1].strip() if len(parts) > 1 else ""
 
         if command == "/help":
             self._show_help()
@@ -157,7 +160,9 @@ class NexusApp:
 
         if command == "/think":
             self._show_thinking = not self._show_thinking
-            state = "[green]on[/green]" if self._show_thinking else "[yellow]off[/yellow]"
+            state = (
+                "[green]on[/green]" if self._show_thinking else "[yellow]off[/yellow]"
+            )
             self.console.print(f"  [{DIM}]Thinking block {state}[/{DIM}]")
             return True
 
@@ -189,44 +194,60 @@ class NexusApp:
         if command == "/do":
             return await self._cmd_do(args)
 
-        self.console.print(f"[{ERROR}]Unknown command: {command}[/{ERROR}]  Type [cyan]/help[/cyan] for a list.")
+        self.console.print(
+            f"[{ERROR}]Unknown command: {command}[/{ERROR}]  Type [cyan]/help[/cyan] for a list."
+        )
         return False
 
     def _show_help(self):
         rows = [
-            ("  /browse [i]task[/i]",   "Perform a browser-based task"),
-            ("  /search [i]query[/i]",  "Answer a question via web search"),
-            ("  /find [i]query[/i]",    "Search for files or text on filesystem"),
-            ("  /read [i]path[/i]",     "Read a local file with syntax highlighting"),
-            ("  /do [i]request[/i]",    "Execute a natural-language command directly"),
-            ("  /install [i]pkg[/i]",   "Install a system package"),
-            ("  /remove [i]pkg[/i]",    "Remove a system package"),
-            ("  /update",               "Update all system packages"),
-            ("  /think",                "Toggle the Thinking block on/off"),
-            ("  /status",               "Show active AI provider and mode"),
-            ("  /help",                 "Show this help"),
-            ("  /exit",                 "Quit Nexus"),
+            ("  /browse [i]task[/i]", "Perform a browser-based task"),
+            ("  /search [i]query[/i]", "Answer a question via web search"),
+            ("  /find [i]query[/i]", "Search for files or text on filesystem"),
+            ("  /read [i]path[/i]", "Read a local file with syntax highlighting"),
+            ("  /do [i]request[/i]", "Execute a natural-language command directly"),
+            ("  /install [i]pkg[/i]", "Install a system package"),
+            ("  /remove [i]pkg[/i]", "Remove a system package"),
+            ("  /update", "Update all system packages"),
+            ("  /think", "Toggle the Thinking block on/off"),
+            ("  /status", "Show active AI provider and mode"),
+            ("  /help", "Show this help"),
+            ("  /exit", "Quit Nexus"),
         ]
-        lines = "\n".join(f"[cyan]{cmd}[/cyan]  [{DIM}]{desc}[/{DIM}]" for cmd, desc in rows)
-        self.console.print(Panel(lines, title="Commands", border_style=ACCENT, padding=(1, 2)))
+        lines = "\n".join(
+            f"[cyan]{cmd}[/cyan]  [{DIM}]{desc}[/{DIM}]" for cmd, desc in rows
+        )
+        self.console.print(
+            Panel(lines, title="Commands", border_style=ACCENT, padding=(1, 2))
+        )
 
     def _show_status(self):
         provider = type(self.llm_client).__name__ if self.llm_client else "None"
-        browser  = "Ready" if self.browser_manager else "Not configured"
-        executor_mode = "Dry-run" if (self.executor and getattr(self.executor, "dry_run", False)) else "Live"
+        browser = "Ready" if self.browser_manager else "Not configured"
+        executor_mode = (
+            "Dry-run"
+            if (self.executor and getattr(self.executor, "dry_run", False))
+            else "Live"
+        )
         lines = (
             f"[{DIM}]AI provider :[/{DIM}]   [cyan]{provider}[/cyan]\n"
             f"[{DIM}]Browser     :[/{DIM}]   [{WARN if browser == 'Not configured' else SUCCESS}]{browser}[/{WARN if browser == 'Not configured' else SUCCESS}]\n"
             f"[{DIM}]Executor    :[/{DIM}]   [cyan]{executor_mode}[/cyan]"
         )
-        self.console.print(Panel(lines, title="Status", border_style=ACCENT, padding=(0, 2)))
+        self.console.print(
+            Panel(lines, title="Status", border_style=ACCENT, padding=(0, 2))
+        )
 
     async def _cmd_browse(self, args: str) -> bool:
         if not args:
-            self.console.print(f"[{WARN}]Usage: /browse [i]task description[/i][/{WARN}]")
+            self.console.print(
+                f"[{WARN}]Usage: /browse [i]task description[/i][/{WARN}]"
+            )
             return False
         if not self.browser_manager:
-            self.console.print(f"[{ERROR}]Browser is not configured. Install [cyan]nexus[browser][/cyan] and ensure an API key is set.[/{ERROR}]")
+            self.console.print(
+                f"[{ERROR}]Browser is not configured. Install [cyan]nexus[browser][/cyan] and ensure an API key is set.[/{ERROR}]"
+            )
             return False
         with self.console.status(f"[{ACCENT}]Browsing…[/{ACCENT}]", spinner="dots"):
             try:
@@ -236,7 +257,9 @@ class NexusApp:
             except Exception as e:
                 self.console.print(f"[{ERROR}]Browser error:[/{ERROR}] {e}")
                 return False
-        self.console.print(Panel(str(result), title="Browser Result", border_style=SUCCESS))
+        self.console.print(
+            Panel(str(result), title="Browser Result", border_style=SUCCESS)
+        )
         return True
 
     async def _cmd_search(self, args: str) -> bool:
@@ -248,6 +271,7 @@ class NexusApp:
             return False
 
         from ..ai.llm_client import GoogleGenAIClient
+
         search_client = None
         candidates = [self.llm_client] + self.fallback_clients
         for c in candidates:
@@ -276,24 +300,40 @@ class NexusApp:
             self.console.print(f"[{WARN}]Usage: /{action} [i]package[/i][/{WARN}]")
             return False
         if not self.app_installer:
-            self.console.print(f"[{ERROR}]Package installer is not available.[/{ERROR}]")
+            self.console.print(
+                f"[{ERROR}]Package installer is not available.[/{ERROR}]"
+            )
             return False
         label = "Installing" if action == "install" else "Removing"
-        with self.console.status(f"[{ACCENT}]{label} [bold]{pkg}[/bold]…[/{ACCENT}]", spinner="dots"):
-            fn = self.app_installer.install if action == "install" else self.app_installer.remove
+        with self.console.status(
+            f"[{ACCENT}]{label} [bold]{pkg}[/bold]…[/{ACCENT}]", spinner="dots"
+        ):
+            fn = (
+                self.app_installer.install
+                if action == "install"
+                else self.app_installer.remove
+            )
             success = fn(pkg)
         if success:
             past = "installed" if action == "install" else "removed"
-            self.console.print(f"[{SUCCESS}]✓[/{SUCCESS}] [bold]{pkg}[/bold] {past} successfully.")
+            self.console.print(
+                f"[{SUCCESS}]✓[/{SUCCESS}] [bold]{pkg}[/bold] {past} successfully."
+            )
         else:
-            self.console.print(f"[{ERROR}]✗[/{ERROR}] Failed to {action} [bold]{pkg}[/bold].")
+            self.console.print(
+                f"[{ERROR}]✗[/{ERROR}] Failed to {action} [bold]{pkg}[/bold]."
+            )
         return success
 
     def _cmd_update(self) -> bool:
         if not self.app_installer:
-            self.console.print(f"[{ERROR}]Package installer is not available.[/{ERROR}]")
+            self.console.print(
+                f"[{ERROR}]Package installer is not available.[/{ERROR}]"
+            )
             return False
-        with self.console.status(f"[{ACCENT}]Updating system packages…[/{ACCENT}]", spinner="dots"):
+        with self.console.status(
+            f"[{ACCENT}]Updating system packages…[/{ACCENT}]", spinner="dots"
+        ):
             success = self.app_installer.update_system()
         if success:
             self.console.print(f"[{SUCCESS}]✓[/{SUCCESS}] System updated.")
@@ -306,32 +346,53 @@ class NexusApp:
             self.console.print(f"[{WARN}]Usage: /find [i]query[/i][/{WARN}]")
             return False
         import shlex as _shlex
+
         safe_q = _shlex.quote(args)
         if not self.executor:
             self.console.print(f"[{ERROR}]Executor not available.[/{ERROR}]")
             return False
 
-        fd_ok = (await asyncio.to_thread(self.executor.run, "which fd", False, None, False))[0] == 0
-        rg_ok = (await asyncio.to_thread(self.executor.run, "which rg", False, None, False))[0] == 0
+        fd_ok = (
+            await asyncio.to_thread(self.executor.run, "which fd", False, None, False)
+        )[0] == 0
+        rg_ok = (
+            await asyncio.to_thread(self.executor.run, "which rg", False, None, False)
+        )[0] == 0
 
         if "." in args and " " not in args:
-            cmd = f"fd {safe_q} ." if fd_ok else f"find . -maxdepth 4 -name '*'{safe_q}'*' -not -path '*/.*'"
+            cmd = (
+                f"fd {safe_q} ."
+                if fd_ok
+                else f"find . -maxdepth 4 -name '*'{safe_q}'*' -not -path '*/.*'"
+            )
         else:
-            cmd = f"rg -l -- {safe_q} ." if rg_ok else f"grep -rIl --max-count=1 -- {safe_q} . | head -n 20"
+            cmd = (
+                f"rg -l -- {safe_q} ."
+                if rg_ok
+                else f"grep -rIl --max-count=1 -- {safe_q} . | head -n 20"
+            )
 
-        rc, out, err = await asyncio.to_thread(self.executor.run, cmd, False, None, False)
+        rc, out, err = await asyncio.to_thread(
+            self.executor.run, cmd, False, None, False
+        )
 
         if rc == 0 and not out.strip() and "." in args:
             self.console.print(f"[{DIM}]No local matches. Searching broader…[/{DIM}]")
-            l_rc, _, _ = await asyncio.to_thread(self.executor.run, "which locate", False, None, False)
+            l_rc, _, _ = await asyncio.to_thread(
+                self.executor.run, "which locate", False, None, False
+            )
             if l_rc == 0:
                 cmd = f"locate -l 10 '*'{safe_q}'*'"
             else:
                 cmd = f"find / -name '*'{safe_q}'*' 2>/dev/null | head -n 10"
-            rc, out, err = await asyncio.to_thread(self.executor.run, cmd, False, None, False)
+            rc, out, err = await asyncio.to_thread(
+                self.executor.run, cmd, False, None, False
+            )
 
         if rc == 0 and out.strip():
-            self.console.print(Panel(out.strip(), title="Search Results", border_style=SUCCESS))
+            self.console.print(
+                Panel(out.strip(), title="Search Results", border_style=SUCCESS)
+            )
         elif rc == 0:
             self.console.print(f"[{WARN}]No matches found.[/{WARN}]")
         else:
@@ -343,11 +404,16 @@ class NexusApp:
             self.console.print(f"[{WARN}]Usage: /read [i]path[/i][/{WARN}]")
             return False
         from pathlib import Path as _Path
+
         abs_path = _Path(args).expanduser().resolve()
         home = _Path.home()
         cwd = _Path.cwd()
-        if not (str(abs_path).startswith(str(home)) or str(abs_path).startswith(str(cwd))):
-            self.console.print(f"[{ERROR}]Reading files outside your home directory is not allowed.[/{ERROR}]")
+        if not (
+            str(abs_path).startswith(str(home)) or str(abs_path).startswith(str(cwd))
+        ):
+            self.console.print(
+                f"[{ERROR}]Reading files outside your home directory is not allowed.[/{ERROR}]"
+            )
             return False
         if not abs_path.exists():
             self.console.print(f"[{ERROR}]File not found: {abs_path}[/{ERROR}]")
@@ -357,36 +423,45 @@ class NexusApp:
             return False
         content = abs_path.read_text(encoding="utf-8", errors="ignore")
         from ..utils.syntax_output import print_syntax
+
         print_syntax(self.console, content, str(abs_path))
         return True
 
     async def _cmd_do(self, args: str) -> bool:
         if not args:
-            self.console.print(f"[{WARN}]Usage: /do [i]natural language request[/i][/{WARN}]")
+            self.console.print(
+                f"[{WARN}]Usage: /do [i]natural language request[/i][/{WARN}]"
+            )
             return False
         if not self.llm_client:
             self.console.print(f"[{ERROR}]No AI provider configured.[/{ERROR}]")
             return False
         from ..ai.command_generator import CommandGenerator
         from ..core.system_detector import SystemDetector
+
         sys_info = SystemDetector().get_info()
         gen = CommandGenerator(self.llm_client, sys_info)
-        with self.console.status(f"[{ACCENT}]Generating command…[/{ACCENT}]", spinner="dots"):
+        with self.console.status(
+            f"[{ACCENT}]Generating command…[/{ACCENT}]", spinner="dots"
+        ):
             try:
                 command = await asyncio.to_thread(gen.generate_command, args)
             except Exception as e:
                 self.console.print(f"[{ERROR}]Command generation failed:[/{ERROR}] {e}")
                 return False
         from ..utils.syntax_output import print_inline_command
+
         self.console.print(f"[{DIM}]Generated:[/{DIM}]")
         print_inline_command(self.console, command)
         self.console.print()
         rc, out, err = await asyncio.to_thread(self.executor.run, command)
         if rc == 0 and out:
             from ..utils.syntax_output import print_command_output
+
             print_command_output(self.console, out, action="do", success=True)
         elif err:
             from ..utils.syntax_output import print_error_output
+
             print_error_output(self.console, err, action="do")
         return rc == 0
 
@@ -399,20 +474,24 @@ class NexusApp:
           2. For PLAN: streams plan-build tokens live under a collapsible header
           3. For CHAT: streams LLM tokens directly to the terminal (no buffering)
         """
-        has_memory = hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client
+        has_memory = (
+            hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client
+        )
 
         # ── Step 1: Decision engine + memory in parallel ───────────────────────
-        has_memory = hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client
+        has_memory = (
+            hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client
+        )
         decision = None
         context_str = ""
 
         # Print the thinking header (toggleable via /think)
         think_icon = "▼" if self._show_thinking else "▶"
         think_hint = "(/think to toggle)"
-        
+
         # Immediate memory feedback
         if has_memory:
-            self.console.print(f"[dim]🧠 Querying long-term memory...[/dim]")
+            self.console.print("[dim]🧠 Querying long-term memory...[/dim]")
 
         if self._show_thinking:
             self.console.print(
@@ -443,7 +522,7 @@ class NexusApp:
             # Sequential is safer for the linter here.
             res_decision = await _run_decision()
             res_memory = await _run_memory()
-            
+
             # Explicitly cast for Pyre
             decision: "Intent" = cast("Intent", res_decision)
             context_str: str = cast(str, res_memory)
@@ -460,7 +539,7 @@ class NexusApp:
                     Text.assemble(("  ", ""), (reasoning, f"dim italic {ACCENT}")),
                     highlight=False,
                 )
-            self.console.print()   # space after thinking block
+            self.console.print()  # space after thinking block
 
         # ── Cached context shortcut ───────────────────────────────────────────
         if decision.action == "SHOW_CACHED":
@@ -483,13 +562,15 @@ class NexusApp:
 
         # Dispatch on intent
         if decision.action == "CLARIFY":
-            self.console.print(f"[{WARN}]🤔 I'm not sure what you mean. Did you mean:[/{WARN}]")
+            self.console.print(
+                f"[{WARN}]🤔 I'm not sure what you mean. Did you mean:[/{WARN}]"
+            )
             if decision.clarification_options:
                 for i, opt in enumerate(decision.clarification_options, 1):
                     self.console.print(f"  {i}. {opt}")
             else:
-                 self.console.print("  1. Something else?")
-                 
+                self.console.print("  1. Something else?")
+
             self.session_manager.add_turn(
                 user_input=text,
                 intent_action="CLARIFY",
@@ -500,7 +581,11 @@ class NexusApp:
             return
 
         if decision.action == "COMMAND":
-            cmd_str = f"{decision.command} {decision.args}".strip() if decision.args else decision.command
+            cmd_str = (
+                f"{decision.command} {decision.args}".strip()
+                if decision.args
+                else decision.command
+            )
             if cmd_str and cmd_str.startswith("/"):
                 success = await self._handle_command(cmd_str)
                 if success:
@@ -512,13 +597,14 @@ class NexusApp:
                         success=True,
                     )
                     return
-                if hasattr(self.decision_engine, 'invalidate_cache'):
+                if hasattr(self.decision_engine, "invalidate_cache"):
                     self.decision_engine.invalidate_cache()
             decision.action = "PLAN"
 
         if decision.action == "PLAN":
             if not self.orchestrator:
                 from ..core.orchestrator import Orchestrator
+
                 self.orchestrator = Orchestrator(
                     self.console,
                     self.executor,
@@ -530,59 +616,86 @@ class NexusApp:
             if self.session_manager:
                 recent_history = self.session_manager.get_recent_history(limit=3)
                 if recent_history:
-                    history_text = "\n".join([f"Previous user request: {t['user_input']}" for t in recent_history])
+                    history_text = "\n".join(
+                        [
+                            f"Previous user request: {t['user_input']}"
+                            for t in recent_history
+                        ]
+                    )
                     recent_context = f"Context from previous turns:\n{history_text}\n"
 
             # ── Stream plan tokens live ───────────────────────────────────────
             steps_accumulator: list[str] = []
             if self._show_thinking:
                 self.console.print(
-                    Text.assemble(("▼ ", f"bold {ACCENT}"), ("Planning", ACCENT), ("  ", ""), ("building your plan…", DIM))
+                    Text.assemble(
+                        ("▼ ", f"bold {ACCENT}"),
+                        ("Planning", ACCENT),
+                        ("  ", ""),
+                        ("building your plan…", DIM),
+                    )
                 )
-                
+
                 try:
                     found_steps = set()
-                    
+
                     # Ensure context components are strings
                     safe_recent = str(recent_context or "")
                     safe_memory = str(context_str or "")
-                    
+
                     if self.orchestrator is None:
                         return
-                    
+
                     # Use local variable for type narrowing
                     orch = self.orchestrator
-                    planning_prompt = orch.planner._build_prompt(text, safe_recent + safe_memory)
+                    planning_prompt = orch.planner._build_prompt(
+                        text, safe_recent + safe_memory
+                    )
                     # Add a marker so the LLM starts outputting the REAL JSON array
                     planning_prompt += "\n\nCRITICAL: Start your response with '[' and follow the JSON format exactly."
 
                     # Consumer function to run in background thread
-                    def consume_and_print(client, prompt, accumulator, found_set, console_ref):
+                    def consume_and_print(
+                        client, prompt, accumulator, found_set, console_ref
+                    ):
                         import re
+
                         json_started = False
                         # Use passed arguments to avoid closure type inference issues
                         for token in client.generate_stream(prompt):
                             t_str = str(token)
                             if "[" in t_str:
                                 json_started = True
-                            
+
                             if not json_started:
                                 continue
-                                
+
                             accumulator.append(t_str)
                             current_text = "".join(accumulator)
                             # Find "description": "..." patterns
-                            matches = re.finditer(r'["\']description["\']\s*:\s*["\']([^"\']+)["\']', current_text)
+                            matches = re.finditer(
+                                r'["\']description["\']\s*:\s*["\']([^"\']+)["\']',
+                                current_text,
+                            )
                             for m in matches:
                                 d_desc = m.group(1)
                                 if d_desc not in found_set:
-                                    console_ref.print(f"  [dim cyan]→[/dim cyan] [dim]{d_desc}[/dim]")
+                                    console_ref.print(
+                                        f"  [dim cyan]→[/dim cyan] [dim]{d_desc}[/dim]"
+                                    )
                                     found_set.add(d_desc)
-                    
+
                     # Use to_thread with explicit arguments
-                    await asyncio.to_thread(consume_and_print, self.llm_client, planning_prompt, steps_accumulator, found_steps, self.console) # type: ignore
+                    await asyncio.to_thread(
+                        consume_and_print,
+                        self.llm_client,
+                        planning_prompt,
+                        steps_accumulator,
+                        found_steps,
+                        self.console,
+                    )  # type: ignore
                 except Exception:
-                    pass   # planning stream is best-effort
+                    pass  # planning stream is best-effort
                 self.console.print()
 
             # ── Execute the plan ──────────────────────────────────────────────
@@ -591,6 +704,7 @@ class NexusApp:
             try:
                 import json
                 from ..core.orchestrator import TaskStep
+
                 full_raw = "".join(steps_accumulator)
                 clean_json = full_raw.replace("```json", "").replace("```", "").strip()
                 start_idx = clean_json.find("[")
@@ -598,41 +712,45 @@ class NexusApp:
                 if start_idx != -1 and end_idx != -1:
                     # Explicit indexing to avoid slice lints
                     json_raw = clean_json[start_idx:]
-                    clean_json = json_raw[:end_idx - start_idx + 1]
-                
+                    clean_json = json_raw[: end_idx - start_idx + 1]
+
                 plan_data = json.loads(clean_json)
                 steps = []
                 for i, s_data in enumerate(plan_data, 1):
-                    steps.append(TaskStep(
-                        id=i,
-                        description=s_data.get("description", ""),
-                        action=s_data.get("action", ""),
-                        command=s_data.get("command", ""),
-                        filename_pattern=s_data.get("filename_pattern"),
-                        file_content=s_data.get("file_content"),
-                        use_cloud=s_data.get("headless", False)
-                    ))
-                
+                    steps.append(
+                        TaskStep(
+                            id=i,
+                            description=s_data.get("description", ""),
+                            action=s_data.get("action", ""),
+                            command=s_data.get("command", ""),
+                            filename_pattern=s_data.get("filename_pattern"),
+                            file_content=s_data.get("file_content"),
+                            use_cloud=s_data.get("headless", False),
+                        )
+                    )
+
                 if not steps:
                     raise ValueError("No steps in plan")
-                    
+
                 orch = self.orchestrator
                 if orch:
                     result = await orch.execute_plan(steps, context_str=recent_context)
                 else:
                     result = None
-                
+
                 if not result:
-                     raise ValueError("Plan execution failed")
+                    raise ValueError("Plan execution failed")
             except Exception:
                 # Fallback: Let orchestrator do its own (non-streaming) planning
                 orch = self.orchestrator
                 if orch:
                     result = await orch.execute_plan(text, context_str=recent_context)
                 else:
-                    self.console.print(f"[{ERROR}]Execution engine error: Orchestrator unavailable.[/{ERROR}]")
+                    self.console.print(
+                        f"[{ERROR}]Execution engine error: Orchestrator unavailable.[/{ERROR}]"
+                    )
                     return
-            
+
             # Store result for session
             self.session_manager.add_turn(
                 user_input=text,
@@ -642,18 +760,22 @@ class NexusApp:
                 success=result.success,
             )
             self.last_action_result = result.output
-            self.last_action_type   = "PLAN"
+            self.last_action_type = "PLAN"
             return
 
         # ── Pure chat — stream with Rich Live for beautiful rendering ──────────
         if not self.llm_client:
-            self.console.print(f"[{ERROR}]No AI provider configured. Set an API key in your .env file.[/{ERROR}]")
+            self.console.print(
+                f"[{ERROR}]No AI provider configured. Set an API key in your .env file.[/{ERROR}]"
+            )
             return
 
         final_prompt = text
         if context_str:
             # Mark it so enrich_prompt can skip if it wants
-            final_prompt = f"--- MEMORY CONTEXT ---\n{context_str}\n--- END MEMORY ---\n\n{text}"
+            final_prompt = (
+                f"--- MEMORY CONTEXT ---\n{context_str}\n--- END MEMORY ---\n\n{text}"
+            )
 
         self.console.print(Rule(style="dim"))
         self.console.print(
@@ -664,41 +786,55 @@ class NexusApp:
         # ── Chat Generation Loop (with fallback) ─────────────────────────────
         response = ""
         # Try primary, then fallbacks
-        clients_to_try = [self.llm_client] + [c for c in self.fallback_clients if c != self.llm_client]
-        
+        clients_to_try = [self.llm_client] + [
+            c for c in self.fallback_clients if c != self.llm_client
+        ]
+
         for i, client in enumerate(clients_to_try):
             response_buf: list[str] = []
-            
+
             # Capture the client in a local var for the closure
             current_client = client
 
             def _stream_with_live(client_ref, prompt_ref, live_ref) -> list[str]:
                 parts: list[str] = []
                 for chunk in client_ref.generate_stream(prompt_ref):
-                    if not chunk: continue
+                    if not chunk:
+                        continue
                     parts.append(str(chunk))
                     live_ref.update(Markdown("".join(parts)))
                 return parts
 
             try:
-                with Live(Markdown(""), console=self.console, refresh_per_second=12, vertical_overflow="ellipsis") as live_inst:
-                    response_buf = await asyncio.to_thread(_stream_with_live, current_client, final_prompt, live_inst) # type: ignore
-                
+                with Live(
+                    Markdown(""),
+                    console=self.console,
+                    refresh_per_second=12,
+                    vertical_overflow="ellipsis",
+                ) as live_inst:
+                    response_buf = await asyncio.to_thread(
+                        _stream_with_live, current_client, final_prompt, live_inst
+                    )  # type: ignore
+
                 response = "".join(response_buf).strip()
                 if response:
-                    break # Success!
-                    
+                    break  # Success!
+
             except Exception as e:
                 # If it's the last client, show the error. Otherwise, try next.
                 if i == len(clients_to_try) - 1:
                     self.console.print(f"[{ERROR}]AI error:[/{ERROR}] {e}")
                     return
                 else:
-                    self.console.print(f"[dim yellow]⚠ Primary model failed, trying fallback...[/dim yellow]")
+                    self.console.print(
+                        "[dim yellow]⚠ Primary model failed, trying fallback...[/dim yellow]"
+                    )
                     continue
 
         if not response:
-            self.console.print(f"[dim italic]No response received from any AI model.[/dim italic]")
+            self.console.print(
+                "[dim italic]No response received from any AI model.[/dim italic]"
+            )
         self.console.print(Rule(style="dim"))
 
         # Store response in decision engine cache so the next identical query
@@ -708,11 +844,13 @@ class NexusApp:
 
         # Store to memory in the background
         if hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client:
-            asyncio.create_task(asyncio.to_thread(
-                self.llm_client.memory_client.add_memory,
-                f"User: {text}\nNexus: {response}",
-                {"type": "chat_history"},
-            ))
+            asyncio.create_task(
+                asyncio.to_thread(
+                    self.llm_client.memory_client.add_memory,
+                    f"User: {text}\nNexus: {response}",
+                    {"type": "chat_history"},
+                )
+            )
 
             # Limit result size to avoid excessive memory usage in history
             safe_response = response or ""
@@ -720,7 +858,7 @@ class NexusApp:
                 truncated_result = safe_response[0:500]
             else:
                 truncated_result = safe_response
-                
+
             self.session_manager.add_turn(
                 user_input=text,
                 intent_action="CHAT",

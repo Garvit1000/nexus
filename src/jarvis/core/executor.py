@@ -1,7 +1,5 @@
 import subprocess
 import shlex
-import time
-import random
 from rich.console import Console
 from typing import Tuple, Optional
 from .security import SafetyCheck, SecurityViolation
@@ -14,7 +12,12 @@ console = Console()
 class CommandExecutor:
     DEFAULT_TIMEOUT = 120
 
-    def __init__(self, dry_run: bool = False, require_confirmation: bool = True, timeout: int = DEFAULT_TIMEOUT):
+    def __init__(
+        self,
+        dry_run: bool = False,
+        require_confirmation: bool = True,
+        timeout: int = DEFAULT_TIMEOUT,
+    ):
         self.dry_run = dry_run
         self.require_confirmation = require_confirmation
         self.timeout = timeout
@@ -28,8 +31,13 @@ class CommandExecutor:
         """Prompt for sudo password securely if not already cached."""
         if self._sudo_password_bytes is None:
             from rich.prompt import Prompt
-            console.print("[yellow]System administration task requires privilege escalation.[/yellow]")
-            pwd = Prompt.ask("[bold cyan]Enter sudo password[/bold cyan]", password=True)
+
+            console.print(
+                "[yellow]System administration task requires privilege escalation.[/yellow]"
+            )
+            pwd = Prompt.ask(
+                "[bold cyan]Enter sudo password[/bold cyan]", password=True
+            )
             # Store as bytearray so we can zero-out memory on clear
             self._sudo_password_bytes = bytearray(pwd.encode("utf-8"))
         return self._sudo_password_bytes.decode("utf-8")
@@ -70,15 +78,23 @@ class CommandExecutor:
 
         # 3. Dry run shortcut
         if self.dry_run:
-            console.print(f"[bold yellow][DRY RUN][/bold yellow] Would execute in {cwd or '.'}: [cyan]{command}[/cyan]")
+            console.print(
+                f"[bold yellow][DRY RUN][/bold yellow] Would execute in {cwd or '.'}: [cyan]{command}[/cyan]"
+            )
             self.audit.log_skipped(command, "dry_run")
             return 0, "Dry run", ""
 
         # 4. User confirmation gate
-        should_confirm = self.require_confirmation if require_confirmation is None else require_confirmation
+        should_confirm = (
+            self.require_confirmation
+            if require_confirmation is None
+            else require_confirmation
+        )
         user_confirmed = True
         if should_confirm:
-            if not confirm_action(f"Allow Nexus to run: [cyan]{command}[/cyan]?", default=False):
+            if not confirm_action(
+                f"Allow Nexus to run: [cyan]{command}[/cyan]?", default=False
+            ):
                 self.audit.log_skipped(command, "user_rejected")
                 return -1, "", "User cancelled execution"
 
@@ -115,10 +131,18 @@ class CommandExecutor:
                 or "sorry, try again" in result.stderr.lower()
             ):
                 self._clear_sudo_password()
-                self.audit.log(command, result.returncode, user_confirmed, "", "Sudo auth failed")
-                return result.returncode, result.stdout, "Sudo authentication failed. Please try again."
+                self.audit.log(
+                    command, result.returncode, user_confirmed, "", "Sudo auth failed"
+                )
+                return (
+                    result.returncode,
+                    result.stdout,
+                    "Sudo authentication failed. Please try again.",
+                )
 
-            self.audit.log(command, result.returncode, user_confirmed, result.stdout, result.stderr)
+            self.audit.log(
+                command, result.returncode, user_confirmed, result.stdout, result.stderr
+            )
             return result.returncode, result.stdout, result.stderr
 
         except subprocess.TimeoutExpired as e:
@@ -150,12 +174,17 @@ class CommandExecutor:
                 command = f"sudo {command}"
 
         if self.dry_run:
-            console.print(f"[bold yellow][DRY RUN][/bold yellow] Would execute interactively: [cyan]{command}[/cyan]")
+            console.print(
+                f"[bold yellow][DRY RUN][/bold yellow] Would execute interactively: [cyan]{command}[/cyan]"
+            )
             self.audit.log_skipped(command, "dry_run")
             return 0
 
         if self.require_confirmation:
-            if not confirm_action(f"Allow Nexus to run INTERACTIVELY: [cyan]{command}[/cyan]?", default=False):
+            if not confirm_action(
+                f"Allow Nexus to run INTERACTIVELY: [cyan]{command}[/cyan]?",
+                default=False,
+            ):
                 console.print("[yellow]Cancelled.[/yellow]")
                 self.audit.log_skipped(command, "user_rejected")
                 return -1

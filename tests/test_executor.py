@@ -10,7 +10,6 @@ Verifies that:
 - Audit log receives an entry for every code path
 """
 
-import pytest
 from unittest.mock import patch, MagicMock
 
 
