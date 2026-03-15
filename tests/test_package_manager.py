@@ -8,9 +8,8 @@ Verifies that:
 - Update command is correct per distro
 """
 
-import pytest
-from unittest.mock import MagicMock, patch
-from jarvis.modules.package_manager import AppInstaller, _VALID_PKG_RE
+from unittest.mock import MagicMock
+from jarvis.modules.package_manager import AppInstaller
 from jarvis.core.system_detector import SystemInfo, PackageManager
 
 

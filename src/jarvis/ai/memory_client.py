@@ -1,14 +1,16 @@
-import os
 import logging
-from typing import List, Optional
+from typing import Optional
+
 
 class SupermemoryClient:
     def __init__(self, api_key: str):
         try:
             from supermemory import Supermemory
         except ImportError:
-            raise ImportError("Supermemory SDK not installed. Run 'pip install supermemory'")
-            
+            raise ImportError(
+                "Supermemory SDK not installed. Run 'pip install supermemory'"
+            )
+
         self.client = Supermemory(api_key=api_key)
 
     def add_memory(self, content: str, metadata: Optional[dict] = None) -> bool:
@@ -17,10 +19,7 @@ class SupermemoryClient:
         """
         try:
             # SDK usage: client.add(content=..., metadata=...)
-            response = self.client.add(
-                content=content,
-                metadata=metadata or {}
-            )
+            self.client.add(content=content, metadata=metadata or {})
             # The SDK likely returns a dict or object. We assume success if no exception.
             return True
         except Exception as e:
@@ -30,7 +29,7 @@ class SupermemoryClient:
     def query_memory(self, query: str, limit: int = 3, time_decay: bool = True) -> str:
         """
         Retrieves relevant context for a query using the official SDK.
-        
+
         Args:
             query: The search query
             limit: Maximum number of results to return
@@ -39,36 +38,38 @@ class SupermemoryClient:
         try:
             # SDK usage: client.search.execute(q=...)
             response = self.client.search.execute(q=query)
-            
+
             # response.results should be a list of dicts or objects
             # Based on user snippet: print(searching.results)
-            if hasattr(response, 'results'):
+            if hasattr(response, "results"):
                 results = response.results
             else:
-                results = response.get('results', [])
+                results = response.get("results", [])
 
             if not results:
                 return ""
-            
+
             # Helper to extract content safely whether it's an object or dict
             def get_content(item):
                 content = None
                 # Try common attribute names
-                for attr in ['content', 'document', 'text', 'page_content']:
+                for attr in ["content", "document", "text", "page_content"]:
                     if isinstance(item, dict):
                         content = item.get(attr)
                     else:
                         content = getattr(item, attr, None)
                     if content:
                         break
-                
+
                 # Fallback to string representation if still None
                 if content is None:
                     # logging.warning(f"Could not extract content from memory item: {item}")
                     return str(item)
                 return str(content)
 
-            context_str = "\n".join([f"- {get_content(item)}" for item in results[:limit]])
+            context_str = "\n".join(
+                [f"- {get_content(item)}" for item in results[:limit]]
+            )
             return f"Relevant Context from Memory:\n{context_str}\n"
         except Exception as e:
             logging.error(f"Failed to query memory: {e}")
@@ -80,9 +81,10 @@ class SupermemoryClient:
         """
         import json
         from dataclasses import asdict, is_dataclass
+
         try:
             content = f"Task Execution Log:\nQuery: {query}\nOutcome: {status}\nOutput: {output[:500]}..."
-            
+
             # Convert plan to dict - handle both dataclass and dict objects
             plan_data = []
             if plan:
@@ -93,12 +95,12 @@ class SupermemoryClient:
                         plan_data.append(p)
                     else:
                         plan_data.append(str(p))
-            
+
             metadata = {
                 "type": "task_log",
                 "status": status,
                 "plan": json.dumps(plan_data),
-                "query": query
+                "query": query,
             }
             return self.add_memory(content, metadata)
         except Exception as e:
@@ -111,23 +113,24 @@ class SupermemoryClient:
         """
         plans = self.query_memory(f"plan for {query}", limit=2)
         errors = self.query_memory(f"error in {query}", limit=2)
-        
+
         context = ""
         if "Relevant Context" in plans:
             context += f"\n### 🧠 RELEVANT PAST PLANS:\n{plans}\n"
         if "Relevant Context" in errors:
             context += f"\n### ⚠️ PAST ERRORS & FIXES:\n{errors}\n"
-            
+
         return context
+
 
 class MockMemoryClient(SupermemoryClient):
     def __init__(self):
         pass
-        
+
     def add_memory(self, content: str, metadata: Optional[dict] = None) -> bool:
         # print(f"[Mock] Added memory: {content}")
         return True
-        
+
     def query_memory(self, query: str, limit: int = 3) -> str:
         return ""
 

@@ -9,20 +9,21 @@ Verifies that:
 - Malformed JSON from LLM returns an empty list
 """
 
-import pytest
-import time
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 from jarvis.core.orchestrator import Planner, TaskStep
 
 
 def make_client(response: str = "", raises: bool = False):
     """Helper to create a lightweight mock LLM client."""
+
     class _C:
         model_name = "mock"
+
         def generate_response(self, _p):
             if raises:
                 raise Exception("429 Rate Limited")
             return response
+
     return _C()
 
 

@@ -5,6 +5,7 @@ import time
 import hashlib
 from threading import Lock
 
+
 @dataclass
 class Intent:
     action: str  # COMMAND, CHAT, SEARCH, BROWSE, PLAN, SHOW_CACHED, CLARIFY
@@ -13,8 +14,9 @@ class Intent:
     confidence: float = 0.0
     reasoning: str = ""
     cached_result: Optional[str] = None  # For SHOW_CACHED action
-    clarification_options: Optional[List[str]] = None # For CLARIFY action
-    plan_steps: Optional[List[Any]] = None # For PLAN action
+    clarification_options: Optional[List[str]] = None  # For CLARIFY action
+    plan_steps: Optional[List[Any]] = None  # For PLAN action
+
 
 class DecisionEngine:
     """
@@ -28,15 +30,15 @@ class DecisionEngine:
     - Cache entries expire after CACHE_TTL seconds so context stays fresh
     """
 
-    CACHE_SIZE = 256   # max distinct entries
-    CACHE_TTL  = 300   # seconds (5 min)
+    CACHE_SIZE = 256  # max distinct entries
+    CACHE_TTL = 300  # seconds (5 min)
 
     def __init__(self, llm_client=None, router_client=None, session_manager=None):
-        self.llm_client     = llm_client
-        self.router_client  = router_client
+        self.llm_client = llm_client
+        self.router_client = router_client
         self.session_manager = session_manager
         self.last_action_result = None
-        self.last_action_type   = "CHAT" # default
+        self.last_action_type = "CHAT"  # default
         # /think toggle — show the thinking block by default
         self._show_thinking: bool = True
         # Intent routing cache: {cache_key: (Intent, timestamp)}
@@ -58,7 +60,7 @@ class DecisionEngine:
         """Normalised cache key — collapses whitespace and removes politeness markers."""
         # Strip politeness and common prefixes to increase cache hit rate
         t = text.lower().strip()
-        t = re.sub(r'^(nexus|jarvis|please|can\s+you|hey|okay|now)\b', '', t).strip()
+        t = re.sub(r"^(nexus|jarvis|please|can\s+you|hey|okay|now)\b", "", t).strip()
         normalised = " ".join(t.split())
         return hashlib.md5(normalised.encode(), usedforsecurity=False).hexdigest()
 
@@ -75,7 +77,7 @@ class DecisionEngine:
                     reasoning="Exact query seen before — showing cached response.",
                     cached_result=resp_entry[0],
                 )
-            if resp_entry:   # expired
+            if resp_entry:  # expired
                 self._response_cache.pop(key, None)
 
             # Fallback: routing-only cache (no response text stored yet)
@@ -84,7 +86,7 @@ class DecisionEngine:
                 # We have a routing decision cached but no response text.
                 # Return the original action so it executes normally.
                 return entry[0]
-            if entry:        # expired
+            if entry:  # expired
                 self._cache.pop(key, None)
         return None
 
@@ -110,7 +112,9 @@ class DecisionEngine:
         key = self._cache_key(user_input)
         with self._cache_lock:
             if len(self._response_cache) >= self.CACHE_SIZE:
-                oldest = min(self._response_cache, key=lambda k: self._response_cache[k][1])
+                oldest = min(
+                    self._response_cache, key=lambda k: self._response_cache[k][1]
+                )
                 self._response_cache.pop(oldest, None)
             self._response_cache[key] = (response_text.strip(), time.monotonic())
 
@@ -141,12 +145,12 @@ class DecisionEngine:
         # NOTE: session-context intents are NOT cached (they depend on live state)
         if self.session_manager:
             context = self.session_manager.get_context_for_decision(user_input)
-            if context and context.get('last_result'):
+            if context and context.get("last_result"):
                 return Intent(
                     action="SHOW_CACHED",
                     confidence=0.98,
                     reasoning=f"User referencing previous {context['last_action']} from {int(context['age_seconds'])}s ago",
-                    cached_result=context['last_result']
+                    cached_result=context["last_result"],
                 )
 
         # --- Cache check (before touching any LLM) ---
@@ -167,14 +171,21 @@ class DecisionEngine:
         # --- Fast Path: Heuristics ---
 
         # 1. System Update
-        if text in ["update", "update system", "upgrade system", "update my pc", "upgrade packages", "update all"]:
+        if text in [
+            "update",
+            "update system",
+            "upgrade system",
+            "update my pc",
+            "upgrade packages",
+            "update all",
+        ]:
             return Intent(
                 action="COMMAND",
                 command="/update",
                 confidence=0.99,
-                reasoning="Precise match for system update request."
+                reasoning="Precise match for system update request.",
             )
-            
+
         # 2. Install Package
         # Matches: "install git", "add nginx", "please install docker"
         install_match = re.search(r"\b(install|add)\s+([a-zA-Z0-9\-_]+)$", text)
@@ -185,12 +196,14 @@ class DecisionEngine:
                 command="/install",
                 args=pkg,
                 confidence=0.95,
-                reasoning=f"User explicitly asked to install '{pkg}'."
+                reasoning=f"User explicitly asked to install '{pkg}'.",
             )
 
         # 3. Remove Package
         # Matches: "remove git", "uninstall docker", "delete nginx"
-        remove_match = re.search(r"\b(remove|uninstall|delete)\s+([a-zA-Z0-9\-_]+)$", text)
+        remove_match = re.search(
+            r"\b(remove|uninstall|delete)\s+([a-zA-Z0-9\-_]+)$", text
+        )
         if remove_match:
             pkg = remove_match.group(2)
             return Intent(
@@ -198,40 +211,52 @@ class DecisionEngine:
                 command="/remove",
                 args=pkg,
                 confidence=0.95,
-                reasoning=f"User explicitly asked to remove '{pkg}'."
+                reasoning=f"User explicitly asked to remove '{pkg}'.",
             )
-            
+
         if text.startswith("search for") or text.startswith("google "):
             query = text.replace("search for", "").replace("google ", "").strip()
-            return Intent(action="COMMAND", command="/search", args=query, confidence=0.9)
+            return Intent(
+                action="COMMAND", command="/search", args=query, confidence=0.9
+            )
 
         # 4. Local File Search
         if text.startswith("find file") or text.startswith("search file"):
-             query = text.replace("find file", "").replace("search file", "").strip()
-             return Intent(action="PLAN", confidence=1.0, reasoning="Direct request to search local filesystem.")
-        
+            query = text.replace("find file", "").replace("search file", "").strip()
+            return Intent(
+                action="PLAN",
+                confidence=1.0,
+                reasoning="Direct request to search local filesystem.",
+            )
+
         # 5. File Content Inspection
         if text.startswith("read file") or text.startswith("cat "):
-             path = text.replace("read file", "").replace("cat ", "").strip()
-             return Intent(action="PLAN", confidence=1.0, reasoning="Direct request to read local file content.")
+            return Intent(
+                action="PLAN",
+                confidence=1.0,
+                reasoning="Direct request to read local file content.",
+            )
 
         # --- Memory Context: Retrieve relevant past actions ---
         memory_context = ""
-        if self.llm_client and hasattr(self.llm_client, "memory_client") and self.llm_client.memory_client:
+        if (
+            self.llm_client
+            and hasattr(self.llm_client, "memory_client")
+            and self.llm_client.memory_client
+        ):
             try:
                 # Query memory for relevant past actions (with temporal bias)
                 query_text = str(text)
                 if len(query_text) > 100:
                     query_text = query_text[:100]
                 recent_actions = self.llm_client.memory_client.query_memory(
-                    f"recent task action {query_text}",
-                    limit=2
+                    f"recent task action {query_text}", limit=2
                 )
                 if recent_actions:
                     memory_context = f"\n### RECENT MEMORY\n{recent_actions}\n"
             except Exception:
                 pass  # Silent fail if memory unavailable
-        
+
         # --- Session History Context ---
         session_context = ""
         if self.session_manager:
@@ -239,19 +264,21 @@ class DecisionEngine:
             if recent_history:
                 history_lines = []
                 for turn in recent_history:
-                    truncated_user = str(turn.get('user_input', ''))
+                    truncated_user = str(turn.get("user_input", ""))
                     # Explicit indexing to avoid slice lints
                     if len(truncated_user) > 50:
                         truncated_user = truncated_user[:50]
                     history_lines.append(
                         f"- {truncated_user} → {turn.get('intent_action', 'UNKNOWN')} ({turn.get('success') and 'success' or 'failed'})"
                     )
-                session_context = f"\n### RECENT CONVERSATION\n" + "\n".join(history_lines) + "\n"
+                session_context = (
+                    "\n### RECENT CONVERSATION\n" + "\n".join(history_lines) + "\n"
+                )
 
         # --- Slow Path: LLM Analysis (LLM Reasoning) ---
         # Prefer the fast Router Client (Groq) if available, otherwise fallback to main LLM.
         active_client = self.router_client if self.router_client else self.llm_client
-        
+
         if active_client:
             # Build enhanced prompt with examples and context
             prompt = f"""
@@ -323,44 +350,59 @@ OUTPUT FORMAT (JSON ONLY):
             try:
                 # We use a lower temperature if possible, but our client interface is simple.
                 response_text = active_client.generate_response(prompt).strip()
-                
+
                 # Default fallback - prefer PLAN over CHAT
-                intent_data = {"action": "PLAN", "confidence": 0.5, "reasoning": "Failed to parse Brain response, attempting to form action plan."}
+                intent_data = {
+                    "action": "PLAN",
+                    "confidence": 0.5,
+                    "reasoning": "Failed to parse Brain response, attempting to form action plan.",
+                }
 
                 # Try to parse JSON. Kimi/GPT might wrap in markdown blocks.
                 import json
-                clean_response = response_text.replace("```json", "").replace("```", "").strip()
+
+                clean_response = (
+                    response_text.replace("```json", "").replace("```", "").strip()
+                )
                 try:
                     intent_data = json.loads(clean_response)
                 except json.JSONDecodeError:
                     # Fallback helper if JSON fails but text looks like a command
                     if response_text.startswith("/"):
-                         parts = response_text.split(" ", 1)
-                         intent_data = {
-                             "action": "COMMAND",
-                             "command": response_text,
-                             "confidence": 0.7,
-                             "reasoning": "Raw command parsed from non-JSON output."
-                         }
+                        parts = response_text.split(" ", 1)
+                        intent_data = {
+                            "action": "COMMAND",
+                            "command": response_text,
+                            "confidence": 0.7,
+                            "reasoning": "Raw command parsed from non-JSON output.",
+                        }
 
                 action = str(intent_data.get("action", "PLAN")).upper()
                 confidence = float(intent_data.get("confidence", 0.5))
                 reasoning = str(intent_data.get("reasoning", ""))
                 clarification_options = intent_data.get("clarification_options", None)
-                
+
                 # Enforce CLARIFY for low confidence
                 if confidence < 0.70 and action != "CLARIFY":
                     action = "CLARIFY"
-                    clarification_options = ["Could you provide more details?", "Are you looking to view system state?", "Something else?"]
-                
-                command_str = str(intent_data.get("command", "")) if intent_data.get("command") else ""
+                    clarification_options = [
+                        "Could you provide more details?",
+                        "Are you looking to view system state?",
+                        "Something else?",
+                    ]
+
+                command_str = (
+                    str(intent_data.get("command", ""))
+                    if intent_data.get("command")
+                    else ""
+                )
                 cmd = None
                 args = None
-                
+
                 if action == "COMMAND" and command_str:
-                     parts = command_str.split(" ", 1)
-                     cmd = parts[0]
-                     args = parts[1] if len(parts) > 1 else ""
+                    parts = command_str.split(" ", 1)
+                    cmd = parts[0]
+                    args = parts[1] if len(parts) > 1 else ""
 
                 result = Intent(
                     action=action,
@@ -368,7 +410,7 @@ OUTPUT FORMAT (JSON ONLY):
                     args=args,
                     confidence=confidence,
                     reasoning=reasoning,
-                    clarification_options=clarification_options
+                    clarification_options=clarification_options,
                 )
                 # Cache the LLM result so next identical query is instant
                 self._set_cached(cache_key, result)
@@ -377,16 +419,12 @@ OUTPUT FORMAT (JSON ONLY):
             except Exception as e:
                 # Return the actual error so the user and developer can see why routing hit a wall
                 return Intent(
-                    action="PLAN",
-                    confidence=0.5,
-                    reasoning=f"Groq API Error: {str(e)}"
+                    action="PLAN", confidence=0.5, reasoning=f"Groq API Error: {str(e)}"
                 )
 
-
-        
         # Default: PLAN (not CHAT) - Better to attempt action than just talk
         return Intent(
             action="PLAN",
             confidence=0.5,
-            reasoning="Intelligent System Routing: Initializing multi-step execution plan."
+            reasoning="Intelligent System Routing: Initializing multi-step execution plan.",
         )

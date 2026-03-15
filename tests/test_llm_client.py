@@ -12,7 +12,7 @@ Verifies that:
 
 import pytest
 from unittest.mock import MagicMock
-from jarvis.ai.llm_client import LLMClient, MockLLMClient
+from jarvis.ai.llm_client import MockLLMClient
 
 
 class TestMockLLMClient:

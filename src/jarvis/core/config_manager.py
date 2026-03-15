@@ -7,25 +7,27 @@ from typing import Optional
 CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME", "~/.config")).expanduser() / "nexus"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
+
 @dataclass
 class NexusConfig:
     dry_run: bool = False
-    model_provider: str = "openrouter" # Default to openrouter as it covers most cases
-    api_key: Optional[str] = None # Deprecated, kept for backward compat
-    
+    model_provider: str = "openrouter"  # Default to openrouter as it covers most cases
+    api_key: Optional[str] = None  # Deprecated, kept for backward compat
+
     # Onboarding & Keys
     onboarding_completed: bool = False
     google_api_key: Optional[str] = None
     openrouter_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     groq_gpt_api_key: Optional[str] = None
-    
+
     # Memory
     use_supermemory: bool = False
     supermemory_api_key: Optional[str] = None
-    
-    dangerous_mode: bool = False # Allow running without confirmation (not recommended)
+
+    dangerous_mode: bool = False  # Allow running without confirmation (not recommended)
     browser_use_api_key: Optional[str] = None
+
 
 class ConfigManager:
     def __init__(self):
@@ -49,7 +51,7 @@ class ConfigManager:
                     config = NexusConfig(**filtered_data)
             except (json.JSONDecodeError, TypeError):
                 pass
-        
+
         # Override with environment variables
         if os.getenv("JARVIS_API_KEY"):
             config.api_key = os.getenv("JARVIS_API_KEY")

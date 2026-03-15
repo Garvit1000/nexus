@@ -12,10 +12,10 @@ from typing import Optional
 from rich.console import Console
 from rich.panel import Panel
 from rich.syntax import Syntax
-from rich.text import Text
 
 
 # ── Language auto-detection ──────────────────────────────────────────────────
+
 
 def detect_output_language(text: str) -> str:
     """
@@ -54,14 +54,39 @@ def detect_output_language(text: str) -> str:
 
     # Bash / shell signals
     shell_hints = [
-        "$ ", "# ", "% ",
-        "── ", "→ ", "-->",
-        "apt ", "sudo ", "systemctl ", "docker ", "git ", "pip ", "python",
-        "Error:", "Warning:", "Fatal:", "fatal:", "panic:",
-        "Permission denied", "No such file", "command not found",
-        "FAILED", "PASSED", "OK\n", "0 upgraded", "Reading package",
-        "Connecting to", "Fetching ", "Cloning into",
-        "make[", "cmake", "gcc", "g++",
+        "$ ",
+        "# ",
+        "% ",
+        "── ",
+        "→ ",
+        "-->",
+        "apt ",
+        "sudo ",
+        "systemctl ",
+        "docker ",
+        "git ",
+        "pip ",
+        "python",
+        "Error:",
+        "Warning:",
+        "Fatal:",
+        "fatal:",
+        "panic:",
+        "Permission denied",
+        "No such file",
+        "command not found",
+        "FAILED",
+        "PASSED",
+        "OK\n",
+        "0 upgraded",
+        "Reading package",
+        "Connecting to",
+        "Fetching ",
+        "Cloning into",
+        "make[",
+        "cmake",
+        "gcc",
+        "g++",
     ]
     if any(h in stripped for h in shell_hints):
         return "bash"
@@ -70,6 +95,7 @@ def detect_output_language(text: str) -> str:
 
 
 # ── Core rendering helper ─────────────────────────────────────────────────────
+
 
 def make_syntax(
     text: str,
@@ -91,7 +117,7 @@ def make_syntax(
     # Only enable line numbers for structured/code formats where they help navigation.
     # For plain terminal output (text, bash) line numbers are just visual noise.
     if not line_numbers and lang in ("json", "yaml", "toml", "python"):
-        line_numbers = text.count("\n") > 8   # only for genuinely long structured blocks
+        line_numbers = text.count("\n") > 8  # only for genuinely long structured blocks
 
     return Syntax(
         text,
@@ -104,6 +130,7 @@ def make_syntax(
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
+
 
 def print_command_output(
     console: Console,
@@ -124,12 +151,12 @@ def print_command_output(
     if not output or not output.strip():
         return
 
-    text   = output.strip()
+    text = output.strip()
     syntax = make_syntax(text, force_lang=force_lang, theme=theme)
 
     if step_id is not None and action is not None:
         colour = "green" if success else "red"
-        label  = f"[{colour} dim]step {step_id}[/{colour} dim]  [cyan]{action}[/cyan]"
+        label = f"[{colour} dim]step {step_id}[/{colour} dim]  [cyan]{action}[/cyan]"
     elif action:
         label = f"[cyan]{action}[/cyan]"
     else:
@@ -179,22 +206,44 @@ def print_inline_command(
     highlighting. Useful for the 'Generated Command:' display.
     """
     syntax = Syntax(
-        command.strip(), language, theme=theme,
-        word_wrap=True, background_color="default",
+        command.strip(),
+        language,
+        theme=theme,
+        word_wrap=True,
+        background_color="default",
     )
     console.print(syntax)
 
 
 _EXT_LANG_MAP = {
-    ".py": "python", ".js": "javascript", ".ts": "typescript",
-    ".json": "json", ".yaml": "yaml", ".yml": "yaml", ".toml": "toml",
-    ".sh": "bash", ".bash": "bash", ".zsh": "bash",
-    ".html": "html", ".css": "css", ".xml": "xml",
-    ".sql": "sql", ".md": "markdown", ".rs": "rust",
-    ".go": "go", ".java": "java", ".c": "c", ".cpp": "cpp",
-    ".rb": "ruby", ".php": "php", ".lua": "lua",
-    ".conf": "ini", ".ini": "ini", ".cfg": "ini",
-    ".dockerfile": "dockerfile", ".tf": "hcl",
+    ".py": "python",
+    ".js": "javascript",
+    ".ts": "typescript",
+    ".json": "json",
+    ".yaml": "yaml",
+    ".yml": "yaml",
+    ".toml": "toml",
+    ".sh": "bash",
+    ".bash": "bash",
+    ".zsh": "bash",
+    ".html": "html",
+    ".css": "css",
+    ".xml": "xml",
+    ".sql": "sql",
+    ".md": "markdown",
+    ".rs": "rust",
+    ".go": "go",
+    ".java": "java",
+    ".c": "c",
+    ".cpp": "cpp",
+    ".rb": "ruby",
+    ".php": "php",
+    ".lua": "lua",
+    ".conf": "ini",
+    ".ini": "ini",
+    ".cfg": "ini",
+    ".dockerfile": "dockerfile",
+    ".tf": "hcl",
 }
 
 
@@ -210,6 +259,7 @@ def print_syntax(
     Used by the ``nexus read`` CLI command.
     """
     import os
+
     ext = os.path.splitext(filepath)[1].lower()
     lang = _EXT_LANG_MAP.get(ext, "text")
 

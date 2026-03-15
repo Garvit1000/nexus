@@ -14,9 +14,8 @@ import json
 import os
 import stat
 import pytest
-from unittest.mock import patch
 
-from jarvis.core.config_manager import ConfigManager, NexusConfig, CONFIG_DIR
+from jarvis.core.config_manager import ConfigManager, NexusConfig
 
 
 @pytest.fixture

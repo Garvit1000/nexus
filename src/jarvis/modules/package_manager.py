@@ -3,7 +3,7 @@ from typing import Optional
 from ..core.system_detector import SystemDetector, PackageManager
 from ..core.executor import CommandExecutor
 
-_VALID_PKG_RE = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9.+\-:]+$')
+_VALID_PKG_RE = re.compile(r"^[a-zA-Z0-9][a-zA-Z0-9.+\-:]+$")
 
 
 class AppInstaller:
@@ -18,28 +18,34 @@ class AppInstaller:
     def install(self, package_name: str) -> bool:
         if not self._validate_package_name(package_name):
             from rich.console import Console
+
             Console().print(f"[red]Error:[/red] Invalid package name: {package_name!r}")
             return False
         cmd = self._get_install_command(package_name)
         if not cmd:
-            import logging; logging.warning(f"Unsupported package manager: {self.sys_info.package_manager}")
+            import logging
+
+            logging.warning(
+                f"Unsupported package manager: {self.sys_info.package_manager}"
+            )
             return False
-            
+
         return_code, _, _ = self.executor.run(cmd, require_sudo=True)
         return return_code == 0
 
     def remove(self, package_name: str) -> bool:
         if not self._validate_package_name(package_name):
             from rich.console import Console
+
             Console().print(f"[red]Error:[/red] Invalid package name: {package_name!r}")
             return False
         cmd = self._get_remove_command(package_name)
         if not cmd:
             return False
-            
+
         return_code, _, _ = self.executor.run(cmd, require_sudo=True)
         return return_code == 0
-    
+
     def update_system(self) -> bool:
         """
         Updates the system packages.
@@ -47,7 +53,7 @@ class AppInstaller:
         cmd = self._get_update_command()
         if not cmd:
             return False
-        
+
         # Updates are often interactive/long, so we might want run_interactive
         # But for now, let's just use run() or maybe run_interactive is better?
         # Let's use run_interactive for updates.
@@ -77,7 +83,7 @@ class AppInstaller:
     def _get_update_command(self) -> Optional[str]:
         pm = self.sys_info.package_manager
         if pm == PackageManager.APT:
-            # We explicitly add sudo to the second command because 'sudo command1 && command2' 
+            # We explicitly add sudo to the second command because 'sudo command1 && command2'
             # only runs command1 as root.
             return "apt-get update && sudo apt-get upgrade -y"
         elif pm == PackageManager.DNF:

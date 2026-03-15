@@ -11,31 +11,37 @@ Verifies that:
 """
 
 import time
-import pytest
-from unittest.mock import patch
 from jarvis.core.session_manager import SessionManager, SessionTurn
 
 
 class TestSessionTurn:
     def test_timestamp_auto_assigned(self):
-        turn = SessionTurn(user_input="hi", intent_action="CHAT", intent_reasoning="test")
+        turn = SessionTurn(
+            user_input="hi", intent_action="CHAT", intent_reasoning="test"
+        )
         assert turn.timestamp is not None
         assert abs(turn.timestamp - time.time()) < 2
 
     def test_is_recent_true_for_new_turn(self):
-        turn = SessionTurn(user_input="hi", intent_action="CHAT", intent_reasoning="test")
+        turn = SessionTurn(
+            user_input="hi", intent_action="CHAT", intent_reasoning="test"
+        )
         assert turn.is_recent(max_age_seconds=10) is True
 
     def test_is_recent_false_for_old_turn(self):
         turn = SessionTurn(
-            user_input="hi", intent_action="CHAT", intent_reasoning="test",
+            user_input="hi",
+            intent_action="CHAT",
+            intent_reasoning="test",
             timestamp=time.time() - 600,
         )
         assert turn.is_recent(max_age_seconds=300) is False
 
     def test_age_seconds_returns_positive(self):
         turn = SessionTurn(
-            user_input="hi", intent_action="CHAT", intent_reasoning="test",
+            user_input="hi",
+            intent_action="CHAT",
+            intent_reasoning="test",
             timestamp=time.time() - 5,
         )
         assert turn.age_seconds() >= 4
@@ -122,16 +128,21 @@ class TestSemanticRelatedness:
 
     def test_overlapping_keywords_related(self):
         sm = SessionManager()
-        assert sm._is_semantically_related(
-            "show me more docker logs", "check docker container"
-        ) is True
+        assert (
+            sm._is_semantically_related(
+                "show me more docker logs", "check docker container"
+            )
+            is True
+        )
 
     def test_no_overlap_unrelated(self):
         sm = SessionManager()
-        assert sm._is_semantically_related(
-            "show me news in delhi today",
-            "download CodeWithHarry podcast episode"
-        ) is False
+        assert (
+            sm._is_semantically_related(
+                "show me news in delhi today", "download CodeWithHarry podcast episode"
+            )
+            is False
+        )
 
 
 class TestGetContextForDecision:
