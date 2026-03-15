@@ -768,8 +768,21 @@ If it cannot be fixed, return: UNFIXABLE
                     elif step.action == "FILE_READ":
                         file_path = step.command.strip()
                         try:
-                            abs_path = os.path.abspath(os.path.expanduser(file_path))
-                            if os.path.exists(abs_path):
+                            from pathlib import Path
+
+                            abs_path = Path(file_path).expanduser().resolve()
+                            home_dir = Path.home()
+                            cwd = Path.cwd()
+                            if not (
+                                str(abs_path).startswith(str(home_dir))
+                                or str(abs_path).startswith(str(cwd))
+                            ):
+                                step.output = f"Path traversal blocked: {abs_path} is outside home and cwd."
+                                step.status = "failed"
+                            elif not abs_path.is_file():
+                                step.output = f"File not found: {abs_path}"
+                                step.status = "failed"
+                            else:
                                 with open(
                                     abs_path, "r", encoding="utf-8", errors="ignore"
                                 ) as f:
@@ -779,9 +792,6 @@ If it cannot be fixed, return: UNFIXABLE
                                 step.output = content
                                 step.status = "success"
                                 context["last_output"] = content
-                            else:
-                                step.output = f"File not found: {abs_path}"
-                                step.status = "failed"
                         except Exception as e:
                             step.output = f"FILE_READ Error: {str(e)}"
                             step.status = "failed"
