@@ -180,6 +180,15 @@ class NexusApp:
             self._show_status()
             return True
 
+        if command == "/find":
+            return await self._cmd_find(args)
+
+        if command == "/read":
+            return await self._cmd_read(args)
+
+        if command == "/do":
+            return await self._cmd_do(args)
+
         self.console.print(f"[{ERROR}]Unknown command: {command}[/{ERROR}]  Type [cyan]/help[/cyan] for a list.")
         return False
 
@@ -187,6 +196,9 @@ class NexusApp:
         rows = [
             ("  /browse [i]task[/i]",   "Perform a browser-based task"),
             ("  /search [i]query[/i]",  "Answer a question via web search"),
+            ("  /find [i]query[/i]",    "Search for files or text on filesystem"),
+            ("  /read [i]path[/i]",     "Read a local file with syntax highlighting"),
+            ("  /do [i]request[/i]",    "Execute a natural-language command directly"),
             ("  /install [i]pkg[/i]",   "Install a system package"),
             ("  /remove [i]pkg[/i]",    "Remove a system package"),
             ("  /update",               "Update all system packages"),
@@ -234,12 +246,25 @@ class NexusApp:
         if not self.llm_client:
             self.console.print(f"[{ERROR}]No AI provider is configured.[/{ERROR}]")
             return False
-        if not hasattr(self.llm_client, "search"):
-            self.console.print(f"[{WARN}]Search is not supported by the current AI provider.[/{WARN}]")
+
+        from ..ai.llm_client import GoogleGenAIClient
+        search_client = None
+        candidates = [self.llm_client] + self.fallback_clients
+        for c in candidates:
+            if isinstance(c, GoogleGenAIClient):
+                search_client = c
+                break
+
+        if not search_client:
+            self.console.print(
+                f"[{WARN}]/search requires a Google (Gemini) provider. "
+                f"Set GOOGLE_API_KEY to enable web search.[/{WARN}]"
+            )
             return False
+
         with self.console.status(f"[{ACCENT}]Searching…[/{ACCENT}]", spinner="dots"):
             try:
-                result = await asyncio.to_thread(self.llm_client.search, args)
+                result = await asyncio.to_thread(search_client.search, args)
             except Exception as e:
                 self.console.print(f"[{ERROR}]Search error:[/{ERROR}] {e}")
                 return False
@@ -275,6 +300,95 @@ class NexusApp:
         else:
             self.console.print(f"[{ERROR}]✗[/{ERROR}] System update failed.")
         return success
+
+    async def _cmd_find(self, args: str) -> bool:
+        if not args:
+            self.console.print(f"[{WARN}]Usage: /find [i]query[/i][/{WARN}]")
+            return False
+        import shlex as _shlex
+        safe_q = _shlex.quote(args)
+        if not self.executor:
+            self.console.print(f"[{ERROR}]Executor not available.[/{ERROR}]")
+            return False
+
+        fd_ok = (await asyncio.to_thread(self.executor.run, "which fd", False, None, False))[0] == 0
+        rg_ok = (await asyncio.to_thread(self.executor.run, "which rg", False, None, False))[0] == 0
+
+        if "." in args and " " not in args:
+            cmd = f"fd {safe_q} ." if fd_ok else f"find . -maxdepth 4 -name '*'{safe_q}'*' -not -path '*/.*'"
+        else:
+            cmd = f"rg -l -- {safe_q} ." if rg_ok else f"grep -rIl --max-count=1 -- {safe_q} . | head -n 20"
+
+        rc, out, err = await asyncio.to_thread(self.executor.run, cmd, False, None, False)
+
+        if rc == 0 and not out.strip() and "." in args:
+            self.console.print(f"[{DIM}]No local matches. Searching broader…[/{DIM}]")
+            l_rc, _, _ = await asyncio.to_thread(self.executor.run, "which locate", False, None, False)
+            if l_rc == 0:
+                cmd = f"locate -l 10 '*'{safe_q}'*'"
+            else:
+                cmd = f"find / -name '*'{safe_q}'*' 2>/dev/null | head -n 10"
+            rc, out, err = await asyncio.to_thread(self.executor.run, cmd, False, None, False)
+
+        if rc == 0 and out.strip():
+            self.console.print(Panel(out.strip(), title="Search Results", border_style=SUCCESS))
+        elif rc == 0:
+            self.console.print(f"[{WARN}]No matches found.[/{WARN}]")
+        else:
+            self.console.print(f"[{ERROR}]Search failed:[/{ERROR}] {err}")
+        return rc == 0
+
+    async def _cmd_read(self, args: str) -> bool:
+        if not args:
+            self.console.print(f"[{WARN}]Usage: /read [i]path[/i][/{WARN}]")
+            return False
+        from pathlib import Path as _Path
+        abs_path = _Path(args).expanduser().resolve()
+        home = _Path.home()
+        cwd = _Path.cwd()
+        if not (str(abs_path).startswith(str(home)) or str(abs_path).startswith(str(cwd))):
+            self.console.print(f"[{ERROR}]Reading files outside your home directory is not allowed.[/{ERROR}]")
+            return False
+        if not abs_path.exists():
+            self.console.print(f"[{ERROR}]File not found: {abs_path}[/{ERROR}]")
+            return False
+        if not abs_path.is_file():
+            self.console.print(f"[{ERROR}]Not a file: {abs_path}[/{ERROR}]")
+            return False
+        content = abs_path.read_text(encoding="utf-8", errors="ignore")
+        from ..utils.syntax_output import print_syntax
+        print_syntax(self.console, content, str(abs_path))
+        return True
+
+    async def _cmd_do(self, args: str) -> bool:
+        if not args:
+            self.console.print(f"[{WARN}]Usage: /do [i]natural language request[/i][/{WARN}]")
+            return False
+        if not self.llm_client:
+            self.console.print(f"[{ERROR}]No AI provider configured.[/{ERROR}]")
+            return False
+        from ..ai.command_generator import CommandGenerator
+        from ..core.system_detector import SystemDetector
+        sys_info = SystemDetector().get_info()
+        gen = CommandGenerator(self.llm_client, sys_info)
+        with self.console.status(f"[{ACCENT}]Generating command…[/{ACCENT}]", spinner="dots"):
+            try:
+                command = await asyncio.to_thread(gen.generate_command, args)
+            except Exception as e:
+                self.console.print(f"[{ERROR}]Command generation failed:[/{ERROR}] {e}")
+                return False
+        from ..utils.syntax_output import print_inline_command
+        self.console.print(f"[{DIM}]Generated:[/{DIM}]")
+        print_inline_command(self.console, command)
+        self.console.print()
+        rc, out, err = await asyncio.to_thread(self.executor.run, command)
+        if rc == 0 and out:
+            from ..utils.syntax_output import print_command_output
+            print_command_output(self.console, out, action="do", success=True)
+        elif err:
+            from ..utils.syntax_output import print_error_output
+            print_error_output(self.console, err, action="do")
+        return rc == 0
 
     # ── Chat handler ──────────────────────────────────────────────────────────
 
@@ -420,14 +534,13 @@ class NexusApp:
                     recent_context = f"Context from previous turns:\n{history_text}\n"
 
             # ── Stream plan tokens live ───────────────────────────────────────
+            steps_accumulator: list[str] = []
             if self._show_thinking:
                 self.console.print(
                     Text.assemble(("▼ ", f"bold {ACCENT}"), ("Planning", ACCENT), ("  ", ""), ("building your plan…", DIM))
                 )
                 
                 try:
-                    # Token-by-token streaming of plan steps for better UX
-                    steps_accumulator = [] 
                     found_steps = set()
                     
                     # Ensure context components are strings

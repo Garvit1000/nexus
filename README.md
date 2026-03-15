@@ -522,7 +522,7 @@ nexus search "best restaurants in Dubai"
 
 ## Testing
 
-Nexus ships with **61 automated pytest tests** covering every critical code path. Run them anytime:
+Nexus ships with **165 automated pytest tests** across 10 test files, covering every critical code path. Run them anytime:
 
 ```bash
 # Install dev dependencies (first time only)
@@ -608,10 +608,32 @@ pytest tests/test_executor.py -v
 
 ---
 
+#### `tests/test_config_manager.py` — 13 tests
+**What it checks:** Config persistence, environment variable overrides, corrupted file recovery, and file permissions.
+
+#### `tests/test_session_manager.py` — 29 tests
+**What it checks:** Turn tracking, history trimming, context reference detection (pronouns, temporal markers), semantic relatedness filtering to prevent false-positive cache hits, and session summary generation.
+
+#### `tests/test_command_generator.py` — 11 tests
+**What it checks:** LLM response cleanup (markdown fences, backticks, whitespace), SafetyCheck validation on generated commands, and memory integration (RAG query + feedback storage).
+
+#### `tests/test_llm_client.py` — 11 tests
+**What it checks:** Base `LLMClient` prompt enrichment (memory prepend, skip, double-enrichment guard, exception handling), `MockLLMClient` fallback, and `search()` raising `NotImplementedError`.
+
+#### `tests/test_package_manager.py` — 22 tests
+**What it checks:** Package name validation (rejects shell injection via `;`, `|`, `` ` ``, `$()`), correct install/remove/update commands for APT/DNF/Pacman, and graceful handling of unknown package managers.
+
+#### `tests/test_orchestrator.py` — 18 tests
+**What it checks:** Missing binary extraction (4 regex patterns), self-healer (`_PKG_ALIAS` mapping, injection protection, LLM fallback, UNFIXABLE handling), plan view rendering, and `execute_plan` (empty plan, user cancellation, terminal step execution).
+
+---
+
 ### CI / Continuous Integration
 
 Tests run automatically on every push via GitHub Actions (`.github/workflows/ci.yml`):
 - Python **3.10**, **3.11**, **3.12** (matrix build)
+- `[dev]` and `[all,dev]` extras tested in CI
+- **Lint job**: `ruff check`, `ruff format --check`, `pip-audit --strict`
 - Branches: `main`, `mvp`
 
 ## Advanced Features
@@ -652,7 +674,7 @@ Nexus is built to gracefully handle failures at both the software and API level:
 | **Unseen command execution** | Agent runs commands user never approved | Mandatory user confirmation gate on every execution; every decision logged to `~/.nexus/audit.log` |
 | **Audit evasion** | Attacker covers tracks by deleting session data | Audit log is separate from session (`audit.log` vs `session.json`), `chmod 600`, append-only via Python logging |
 | **API key leakage** | Keys logged in debug output or stack traces | No debug prints in production paths; keys read from env/config, never echoed |
-| **Indefinite hangs** | Malformed command hangs the subprocess forever | 30-second timeout on all `subprocess.run` calls |
+| **Indefinite hangs** | Malformed command hangs the subprocess forever | Configurable timeout (default 120s) on all `subprocess.run` calls |
 | **Cascading API failures** | All LLM fallbacks slammed simultaneously on rate-limit | Exponential backoff with jitter between fallback attempts |
 
 ### Remaining Attack Surface / Known Limitations
@@ -679,26 +701,37 @@ nexus/
 ├── src/jarvis/
 │   ├── ai/                      # AI clients and intelligence
 │   │   ├── llm_client.py        # Model abstractions + prompt enrichment
-│   │   ├── command_generator.py
+│   │   ├── command_generator.py  # NL → shell with SafetyCheck
 │   │   ├── decision_engine.py   # Fast heuristic + slow LLM routing
 │   │   └── memory_client.py     # Supermemory RAG integration
 │   ├── core/                    # Core systems
 │   │   ├── orchestrator.py      # Multi-step execution + self-healing
 │   │   ├── executor.py          # Command execution + audit + secure sudo
-│   │   ├── audit_logger.py      # Persistent tamper-evident command log NEW
+│   │   ├── audit_logger.py      # Tamper-evident command log (chmod 600)
 │   │   ├── session_manager.py   # In-memory session state
-│   │   ├── persistent_session_manager.py  # Disk-persisted sessions WIRED
-│   │   ├── config_manager.py
+│   │   ├── persistent_session_manager.py  # Disk-persisted sessions
+│   │   ├── config_manager.py    # API keys + preferences (chmod 600)
+│   │   ├── api_key_rotator.py   # Google API key rotation
 │   │   ├── system_detector.py
 │   │   └── security.py          # AST validation + pattern blacklist
 │   ├── modules/                 # Feature modules
-│   │   ├── browser_manager.py   # With API key rotation
-│   │   └── package_manager.py
+│   │   ├── browser_manager.py   # browser-use + API key rotation
+│   │   └── package_manager.py   # apt/dnf/pacman with name validation
 │   ├── ui/                      # User interfaces
-│   │   ├── console_app.py       # TUI (uses PersistentSessionManager)
+│   │   ├── console_app.py       # Rich TUI with slash commands
 │   │   └── onboarding.py
-│   └── main.py                  # CLI entry point
-├── FUTURE_SCOPE.md              # P2/P3 planned features NEW
+│   ├── utils/
+│   │   └── syntax_output.py     # Rich syntax highlighting for file reads
+│   └── main.py                  # CLI entry point (Typer)
+├── tests/                       # 165 pytest tests across 10 files
+├── docs/
+│   ├── FUTURE_SCOPE.md          # Roadmap + shipped features
+│   ├── architecture_overview.md # Architecture deep-dive with Mermaid diagrams
+│   ├── model_usage_guide.md     # Which AI model is used where
+│   ├── API_KEY_ROTATION_GUIDE.md
+│   ├── GROQ_GPT_FALLBACK.md
+│   └── MEMORY_PERSISTENCE_GUIDE.md
+├── .github/workflows/ci.yml    # CI: tests + lint + security scan
 ├── pyproject.toml
 └── README.md
 ```
@@ -715,22 +748,16 @@ nexus/
 
 ## Roadmap
 
-See [FUTURE_SCOPE.md](FUTURE_SCOPE.md) for detailed planned features:
-- Multi-brain AI architecture
-- Memory system integration (Supermemory RAG)
-- Browser automation with API key rotation
-- Self-healing execution (3-attempt AI loop)
-- Exponential backoff on LLM failover
-- SERVICE_MGT action with auto-verify
-- Persistent session (survives restarts)
-- Audit log (`~/.nexus/audit.log`)
-- Secure sudo memory (bytearray zero-wipe)
-- AppImage / `.deb` installation pipeline
-- MCP (Model Context Protocol) integration
-- Git assistant (natural language git)
-- Docker management mode
-- Natural language cron jobs
-- Multi-step rollback
+See [docs/FUTURE_SCOPE.md](docs/FUTURE_SCOPE.md) for the full roadmap.
+
+**Shipped:**
+Multi-brain AI architecture, Supermemory RAG, browser automation with key rotation, self-healing execution, exponential backoff, SERVICE_MGT, persistent sessions, audit logging, secure sudo, shell injection hardening, 165-test suite, CI with linting and security scanning.
+
+**Up next:**
+Rollback checkpoints, dynamic slash command registry, APP_INSTALL action, direct execution for small tasks, LLM rate limiting, context window management, parallel step execution.
+
+**Long-term:**
+MCP integration, Git assistant, Docker management mode, natural language cron jobs, interactive desktop avatar.
 
 ## Contributing
 

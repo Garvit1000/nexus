@@ -1,6 +1,7 @@
 import json
 from .llm_client import LLMClient
 from ..core.system_detector import SystemInfo
+from ..core.security import SafetyCheck, SecurityViolation
 
 class CommandGenerator:
     def __init__(self, llm_client: LLMClient, system_info: SystemInfo):
@@ -10,13 +11,20 @@ class CommandGenerator:
     def generate_command(self, user_request: str) -> str:
         """
         Converts a natural language request into a shell command.
+        Validates the generated command through SafetyCheck before returning.
         """
         prompt = self._build_prompt(user_request)
         response_text = self.llm.generate_response(prompt)
         command = self._parse_response(response_text)
+
+        try:
+            SafetyCheck.check_command(command)
+        except SecurityViolation as e:
+            raise SecurityViolation(
+                f"LLM generated an unsafe command: {e}. "
+                f"Original request: '{user_request}'"
+            )
         
-        # Automatically save successful generations to memory if available
-        # We assume if we generated a command, it's a valid interaction worth remembering
         if self.llm.memory_client:
             self.llm.memory_client.add_memory(
                 content=f"User requested: '{user_request}'. Nexus generated: '{command}'",

@@ -8,13 +8,16 @@ on:
 
 jobs:
   test:
-    name: pytest (${{ matrix.python-version }})
+    name: pytest (${{ matrix.python-version }}, ${{ matrix.extras }})
     runs-on: ubuntu-latest
     strategy:
-      # Don't cancel all matrix jobs if one fails
       fail-fast: false
       matrix:
         python-version: ["3.10", "3.11", "3.12"]
+        extras: ["dev"]
+        include:
+          - python-version: "3.11"
+            extras: "all,dev"
 
     steps:
       - uses: actions/checkout@v4
@@ -28,23 +31,47 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml') }}
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ matrix.extras }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: |
             ${{ runner.os }}-pip-${{ matrix.python-version }}-
 
-      - name: Install core + dev dependencies
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # Install only core (lightweight) deps + test runner
-          # Heavy [ai] and [browser] extras are NOT installed in CI
-          # — tests mock all AI/browser calls
-          pip install -e ".[dev]"
+          pip install -e ".[${{ matrix.extras }}]"
 
       - name: Run tests
         run: pytest --tb=short -q
 
-      - name: Show coverage (Python 3.11 only)
-        if: matrix.python-version == '3.11'
+      - name: Show coverage (Python 3.11 core only)
+        if: matrix.python-version == '3.11' && matrix.extras == 'dev'
         run: |
           pip install pytest-cov
           pytest --cov=src/jarvis --cov-report=term-missing -q
+
+  lint:
+    name: lint & security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pip-audit
+          pip install -e ".[dev]"
+
+      - name: Ruff lint
+        run: ruff check src/ tests/
+
+      - name: Ruff format check
+        run: ruff format --check src/ tests/
+
+      - name: Pip audit (security)
+        run: pip-audit --strict
+        continue-on-error: true

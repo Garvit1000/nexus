@@ -122,7 +122,7 @@ class BrowserManager:
                 # Note: Browser is an alias for BrowserSession
                 browser = Browser(
                     headless=False, 
-                    disable_security=True,
+                    disable_security=False,
                     downloads_path=downloads_path
                 )
 
@@ -142,8 +142,17 @@ class BrowserManager:
                     browser=browser,
                     use_vision=self.use_vision
                 )
-                # Since Agent.run() is async, running in event loop
-                history = asyncio.run(agent.run())
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    import concurrent.futures
+                    with concurrent.futures.ThreadPoolExecutor() as pool:
+                        history = pool.submit(asyncio.run, agent.run()).result()
+                else:
+                    history = asyncio.run(agent.run())
                 return history.final_result()
             
         except Exception as e:

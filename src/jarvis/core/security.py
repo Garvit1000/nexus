@@ -42,7 +42,7 @@ class CommandValidator:
     DANGEROUS_PATTERNS = [
         (r'rm\s+-rf\s+/', "Recursive delete on root directory"),
         (r'dd\s+if=/dev/(zero|urandom)\s+of=/dev/sd', "Disk wipe operation"),
-        (r':\(\)\{.*:\|:.*\};:', "Fork bomb pattern"),
+        (r':\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:', "Fork bomb pattern"),
         (r'mkfs\.', "Filesystem format operation"),
         (r'chmod\s+-R\s+777', "Overly permissive recursive chmod"),
         (r'wget.*\|\s*bash', "Piping download directly to bash"),
@@ -53,7 +53,7 @@ class CommandValidator:
     # Patterns that are always blocked
     BLOCKED_PATTERNS = [
         (r'rm\s+-rf\s+/\s*$', "Attempting to delete root directory"),
-        (r':()\{.*:\|:.*\};:', "Fork bomb detected"),
+        (r':\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:', "Fork bomb detected"),
     ]
     
     def __init__(self):

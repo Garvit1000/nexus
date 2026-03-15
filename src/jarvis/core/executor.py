@@ -12,10 +12,12 @@ console = Console()
 
 
 class CommandExecutor:
-    def __init__(self, dry_run: bool = False, require_confirmation: bool = True):
+    DEFAULT_TIMEOUT = 120
+
+    def __init__(self, dry_run: bool = False, require_confirmation: bool = True, timeout: int = DEFAULT_TIMEOUT):
         self.dry_run = dry_run
         self.require_confirmation = require_confirmation
-        # P0: Store password as a mutable bytearray so we can zero it out on clear
+        self.timeout = timeout
         self._sudo_password_bytes: Optional[bytearray] = None
         self.audit = AuditLogger()
 
@@ -105,10 +107,9 @@ class CommandExecutor:
                 cwd=cwd,
                 shell=use_shell,
                 input=input_data,
-                timeout=30,
+                timeout=self.timeout,
             )
 
-            # P0: Detect auth failure and zero-out cached password
             if result.returncode != 0 and (
                 "incorrect password" in result.stderr.lower()
                 or "sorry, try again" in result.stderr.lower()
@@ -117,13 +118,12 @@ class CommandExecutor:
                 self.audit.log(command, result.returncode, user_confirmed, "", "Sudo auth failed")
                 return result.returncode, result.stdout, "Sudo authentication failed. Please try again."
 
-            # P1: Audit every executed command
             self.audit.log(command, result.returncode, user_confirmed, result.stdout, result.stderr)
             return result.returncode, result.stdout, result.stderr
 
         except subprocess.TimeoutExpired as e:
             self.audit.log(command, -1, user_confirmed, "", f"Timeout: {e}")
-            return -1, "", f"Command timed out after 30 seconds: {e}"
+            return -1, "", f"Command timed out after {self.timeout} seconds: {e}"
         except Exception as e:
             self.audit.log(command, -1, user_confirmed, "", str(e))
             return -1, "", str(e)
