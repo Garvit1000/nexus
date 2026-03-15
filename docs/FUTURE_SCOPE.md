@@ -44,10 +44,17 @@
 - Planner prompt rule: *"If a BROWSER step downloads a binary, the NEXT step MUST be APP_INSTALL"*
 - Post-install CHECK verifies the binary exists in PATH
 
-### 5. FTP Security Protection
+### 5. FILE_APPEND / FILE_PATCH Action
+**Current state:** Nexus only has `FILE_WRITE` which overwrites the entire file. To append to a file (e.g., add a line to `.bashrc`, append config to `nginx.conf`), the LLM must use a `TERMINAL` action with `echo "..." >> file`, which is fragile and prone to shell injection.
+**What to build:**
+- New `FILE_APPEND` action type that opens the file in append mode (`"a"`) with the same path traversal protection as `FILE_READ`.
+- Optional `FILE_PATCH` variant that inserts content at a specific line or after a pattern match.
+- Safer than piping through shell — content is written directly via Python `open()`, no injection possible.
+
+### 6. FTP Security Protection
 FTP-related commands need safety checks (anonymous login, plaintext credential exposure) in `security.py`.
 
-### 6. LLM Rate Limiting & Budget Tracking
+### 7. LLM Rate Limiting & Budget Tracking
 **Current state:** No throttling — a user in rapid-fire mode can burn through API credits in minutes.
 **What to build:**
 - Per-minute rate limiter in `LLMClient.generate_response()`.
