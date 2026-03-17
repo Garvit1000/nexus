@@ -27,15 +27,13 @@ class LLMClient(ABC):
             return prompt
 
         try:
-            # 3. Query memory with the pure user signal
-            # Extract just the user text if it's already been mixed with something else
             query_signal = prompt
             if "User: " in prompt and "\nNexus: " in prompt:
-                # Handle history-enriched prompts if needed
                 query_signal = prompt.split("User: ")[-1]
 
             context = self.memory_client.query_memory(query_signal[:500])
             if context:
+                context = str(context)[:2000]
                 return (
                     f"--- MEMORY CONTEXT ---\n{context}\n--- END MEMORY ---\n\n{prompt}"
                 )
@@ -204,6 +202,47 @@ class OpenRouterClient(LLMClient):
             delta = chunk.choices[0].delta.content
             if delta:
                 yield delta
+
+
+class AnthropicClient(LLMClient):
+    """Anthropic Claude client — high-quality reasoning and long context."""
+
+    def __init__(self, api_key: str, model: str = "claude-sonnet-4-20250514"):
+        super().__init__()
+        try:
+            from anthropic import Anthropic
+        except ImportError:
+            raise ImportError(
+                "Anthropic library not installed. Run: pip install anthropic"
+            )
+        self.client = Anthropic(api_key=api_key)
+        self.model = model
+
+    def _call(self, prompt: str, model: str | None = None, stream: bool = False):
+        effective_prompt = self.enrich_prompt(prompt)
+        params = {
+            "model": model or self.model,
+            "max_tokens": 8192,
+            "messages": [{"role": "user", "content": effective_prompt}],
+            "system": (
+                "You are Nexus, an elite intelligent Linux Assistant. "
+                "You are NOT ChatGPT. You are a CLI tool created by Garvit. "
+                "Be helpful, precise, and concise."
+            ),
+        }
+        if stream:
+            return self.client.messages.stream(**params)
+        return self.client.messages.create(**params)
+
+    def generate_response(self, prompt: str, model: Optional[str] = None) -> str:
+        response = self._call(prompt, model)
+        return response.content[0].text if response.content else ""
+
+    def generate_stream(self, prompt: str, model: Optional[str] = None):
+        """Yield text chunks via Anthropic streaming."""
+        with self._call(prompt, model, stream=True) as stream:
+            for text in stream.text_stream:
+                yield text
 
 
 class GroqClient(LLMClient):

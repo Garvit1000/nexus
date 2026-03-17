@@ -29,6 +29,7 @@ from .ai.llm_client import (
     OpenRouterClient,
     GroqClient,
     GroqGPTClient,
+    AnthropicClient,
 )
 
 from .ai.memory_client import SupermemoryClient
@@ -100,46 +101,42 @@ groq_gpt_key = (
     or os.getenv("GROQ_GPT_API_KEY")
     or groq_key
 )
+anthropic_key = (
+    config_mgr.config.anthropic_api_key
+    or os.getenv("NEXUS_ANTHROPIC_API_KEY")
+    or os.getenv("ANTHROPIC_API_KEY")
+)
 
 llm_client: Optional[LLMClient] = None
 router_client: Optional[LLMClient] = None
 fallback_clients: List[LLMClient] = []
 
-# 1. Setup Groq (Preferred Brain / Limbic System)
-# Used for DECISIONS (Router) always if available
+# 1. Setup Groq Router (Decision Engine — ultra-fast intent routing)
 if groq_key:
     try:
-        # Groq uses different models: llama-3.3-70b-versatile, llama-3.1-8b-instant, etc.
-        # kimi is NOT a groq model, but we keep it if that was intent via some proxy
-        # but for native groq we should use a valid one.
-        groq_client = GroqClient(api_key=groq_key, model="llama-3.3-70b-versatile")
+        groq_client = GroqClient(api_key=groq_key)  # default: kimi-k2-instruct-0905
         router_client = groq_client
     except Exception:
         pass
 
-# 2. Setup Chat Brain (Cortex)
-# Priority: OpenRouter -> Groq -> Google -> Mock
+# 2. Setup Chat Brain
+# Priority: OpenRouter -> Claude -> Groq Kimi -> Google Gemini -> Mock
 if openrouter_key:
-    # Use user's requested models as fallbacks via OpenRouter
-    llm_client = OpenRouterClient(api_key=openrouter_key)
+    llm_client = OpenRouterClient(api_key=openrouter_key)  # default: gpt-oss-120b:free
     fallback_clients.append(llm_client)
 
-    # Add Grok and Kimi as dedicated fallbacks if requested
-    fallback_clients.append(
-        OpenRouterClient(api_key=openrouter_key, model="x-ai/grok-2-1212")
-    )
-    fallback_clients.append(
-        OpenRouterClient(
-            api_key=openrouter_key, model="moonshotai/kimi-k2-instruct-0905"
-        )
-    )
+if anthropic_key:
+    try:
+        fallback_a = AnthropicClient(api_key=anthropic_key)
+        if not llm_client:
+            llm_client = fallback_a
+        fallback_clients.append(fallback_a)
+    except ImportError:
+        pass
 
 if groq_gpt_key:
     try:
-        # Use a valid Groq model name
-        fallback_v = GroqGPTClient(
-            api_key=groq_gpt_key, model="llama-3.3-70b-versatile"
-        )
+        fallback_v = GroqGPTClient(api_key=groq_gpt_key)  # default: gpt-oss-120b
         if not llm_client:
             llm_client = fallback_v
         fallback_clients.append(fallback_v)
@@ -151,6 +148,13 @@ if router_client:
         llm_client = router_client
     if router_client not in fallback_clients:
         fallback_clients.append(router_client)
+
+if openrouter_key:
+    fallback_clients.append(
+        OpenRouterClient(
+            api_key=openrouter_key, model="moonshotai/kimi-k2-0905"
+        )
+    )
 
 if api_key:
     fallback_g = GoogleGenAIClient(api_key=api_key)

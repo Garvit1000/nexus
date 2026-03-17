@@ -28,6 +28,7 @@ ai = [
     "langchain-google-genai>=0.0.1",
     "langchain-openai>=0.0.1",
     "groq>=0.9.0",
+    "anthropic>=0.40.0",
     "supermemory>=3.23.0",
 ]
 
@@ -45,6 +46,7 @@ all = [
     "langchain-google-genai>=0.0.1",
     "langchain-openai>=0.0.1",
     "groq>=0.9.0",
+    "anthropic>=0.40.0",
     "supermemory>=3.23.0",
     "browser-use>=0.1.0",
     "browser-use-sdk>=0.0.1",
