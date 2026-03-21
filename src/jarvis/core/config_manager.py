@@ -20,6 +20,7 @@ class NexusConfig:
     openrouter_api_key: Optional[str] = None
     groq_api_key: Optional[str] = None
     groq_gpt_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
 
     # Memory
     use_supermemory: bool = False
@@ -69,6 +70,8 @@ class ConfigManager:
             config.groq_api_key = os.getenv("GROQ_API_KEY")
         if os.getenv("GROQ_GPT_API_KEY"):
             config.groq_gpt_api_key = os.getenv("GROQ_GPT_API_KEY")
+        if os.getenv("ANTHROPIC_API_KEY"):
+            config.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
         if os.getenv("SUPERMEMORY_API_KEY"):
             config.supermemory_api_key = os.getenv("SUPERMEMORY_API_KEY")
         return config

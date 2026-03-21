@@ -3,6 +3,7 @@ import asyncio
 import time
 import random
 import os
+import re
 import shlex
 from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass
@@ -64,7 +65,6 @@ class Planner:
 
         if hasattr(primary_client, "memory_client") and primary_client.memory_client:
             try:
-                # Only use memory hits if they are likely relevant
                 rag_hits = primary_client.memory_client.query_memory(
                     f"planned task {request}", limit=1
                 )
@@ -86,168 +86,71 @@ class Planner:
                     }
                     if any(kw in hit_text for kw in req_keywords):
                         proven_context = (
-                            f"\n### PROVEN PAST PLAN (ADAPT THIS)\n{rag_hits}\n"
+                            f"\n### PROVEN PAST PLAN (ADAPT THIS)\n"
+                            f"{str(rag_hits)[:1500]}\n"
                         )
             except Exception:
                 pass
-        return f"""
-You are the Tactical Planner for Nexus.
-You are an expert system architect and operations manager.
 
-### CORE OBJECTIVE
-Break down the user's request into a bulletproof, idempotent execution plan.
+        # Cap context_str to prevent token explosion from memory dumps
+        if context_str and len(context_str) > 1500:
+            context_str = context_str[:1500] + "..."
 
-### MEMORY CONTEXT
+        # The --- MEMORY CONTEXT --- marker tells enrich_prompt() to skip
+        # its own memory query, preventing triple-injection.
+        return f"""--- MEMORY CONTEXT ---
 {proven_context}
+--- END MEMORY ---
+You are the Tactical Planner for Nexus, an autonomous Linux agent.
+Break the user's request into a minimal, idempotent execution plan.
 
-### WORKSPACE AWARENESS
-- Current Path: {cwd}
-- Files in current directory: {ls_output}
+CWD: {cwd} | Files: {ls_output}
 
-### REQUEST
-{context_str}
-"{request}"
+REQUEST: {context_str} "{request}"
 
-### AVAILABLE ACTIONS
-1. **BROWSER**: For web data retrieval, navigation, or downloads
-   - Set `"headless": true` for data scraping
-   - Set `"headless": false` for interactive browsing
-   - Optional: `"filename_pattern": "*.pdf"` (detects if file already exists)
+ACTIONS:
+- TERMINAL: shell commands (apt install, systemctl, docker, etc.)
+- BROWSER: web data/downloads. headless=true for scraping, false for interactive. Optional filename_pattern.
+- CHECK: verify state/dependencies (which nginx, systemctl is-active). Use BEFORE sysadmin tasks.
+- FILE_WRITE: create/overwrite files. command="/absolute/path", file_content="data"
+- FILE_READ: read file content. command="/absolute/path"
+- FILE_SEARCH: find files/folders/content ANYWHERE on system. Searches local then global automatically.
+  - Name/directory: command="sites" or command="advran/sites" or command=".bashrc"
+  - Content grep: command="content:password_hash"
+  - NEVER use TERMINAL with find/locate — always use FILE_SEARCH instead.
+- AZURE_RUN: run untrusted/heavy scripts in disposable cloud sandbox.
+- SERVICE_MGT: manage system services.
 
-2. **TERMINAL**: For shell commands (system operations, service management)
-   - Use for `apt install`, `systemctl restart`, `docker run`, etc.
+RULES:
+1. Minimal steps. Each step runs in an ISOLATED shell.
+2. Don't over-engineer: "show news" → one BROWSER step, not CHECK+BROWSER.
+3. Use CHECK only for sysadmin dependency verification, not for live data.
+4. For file config: FILE_WRITE, not echo/tee in TERMINAL.
+5. For any file/folder search: FILE_SEARCH, not TERMINAL with find/locate.
 
-3. **AZURE_RUN**: For executing untrusted / heavy scripts in a disposable Azure Cloud Sandbox.
-   - Command should be the bash string to run inside the cloud container.
-   - Example: `"command": "git clone myrepo && cd myrepo && npm test"`
+EXAMPLES:
+"Setup Nginx on port 8080" →
+[{{"action":"CHECK","command":"which nginx || exit 1","description":"Check Nginx installed"}},{{"action":"TERMINAL","command":"sudo apt-get update && sudo apt-get install -y nginx","description":"Install Nginx"}},{{"action":"FILE_WRITE","command":"/etc/nginx/sites-available/hello","file_content":"server {{\\n  listen 8080;\\n  location / {{ return 200 'Hello'; }}\\n}}","description":"Write config"}},{{"action":"TERMINAL","command":"sudo ln -s /etc/nginx/sites-available/hello /etc/nginx/sites-enabled/ && sudo systemctl restart nginx","description":"Enable and restart"}},{{"action":"CHECK","command":"curl -f http://localhost:8080","description":"Verify"}}]
 
-4. **CHECK**: For verifying if a SPECIFIC FILE, CLI TOOL, or STATE exists
-   - VERY IMPORTANT: Use to verify dependencies (e.g., `which nginx`) before attempting to use them.
-   - Use for state validation (e.g., `systemctl is-active nginx`).
+"find sites folder in advran" →
+[{{"action":"FILE_SEARCH","command":"advran/sites","description":"Search for sites directory inside advran"}}]
 
-5. **FILE_WRITE**: For safely creating or overwriting files.
-   - Requires `"command": "/absolute/path/to/file"`
-   - Requires `"file_content": "multiline string data"`
+"show me latest Delhi news" →
+[{{"action":"BROWSER","command":"Search latest Delhi news top 10 headlines","headless":true,"description":"Fetch Delhi news"}}]
 
-6. **FILE_READ**: For inspecting the content of local files.
-   - Requires `"command": "/absolute/path/to/file"`
-   - USE THIS to understand structure or configuration before editing.
-
-7. **FILE_SEARCH**: For searching files or patterns.
-   - Requires `"command": "search query"`
-   - If searching for filename, use `"command": "filename.py"`
-   - If searching for content, use `"command": "pattern"`.
-
-### PLANNING INTELLIGENCE
-**UNDERSTAND THE REQUEST FIRST:**
-- What is the user's PRIMARY goal?
-- Do they want to RETRIEVE data, DOWNLOAD a file, CHECK system state, DEPLOY a service, or SEARCH local files?
-- If the task involves code/config, READ the relevant files first.
-
-**TASK TYPE RECOGNITION:**
-
-1. **System Administration Tasks** (install, deploy, configure services like Nginx/Docker):
-   - Step 1: CHECK dependency (e.g., `which nginx || exit 1`)
-   - Step 2: TERMINAL install if checking failed
-   - Step 3: FILE_WRITE for configuration files (DO NOT use `echo "..." > file`)
-   - Step 4: CHECK state validation (e.g., `systemctl is-active nginx`)
-
-2. **Data Retrieval Tasks** (news, posts, weather, trending topics):
-   - NO CHECK step needed (data changes constantly)
-   - Direct BROWSER action with headless=true
-   - Example: "show me latest news" → Just fetch and display
-
-3. **Download Tasks** (download file, get installer):
-   - CHECK if file pattern provided and resumability matters
-   - BROWSER with filename_pattern for download
-   - Optional TERMINAL for post-processing
-
-4. **Interactive Tasks** (open website):
-   - BROWSER with headless=false
-   - NO CHECK step
-
-### CRITICAL RULES
-
-1. **DON'T OVER-ENGINEER**:
-   - User asks "show me news" → Just fetch the news, don't check if news exists locally
-   - User asks "get weather" → Just get weather, don't check cache
-
-2. **CHECK Step Guidelines**:
-   - ✅ USE CHECK: Verifying dependencies before sysadmin tasks (`which docker`) or avoiding re-downloads.
-   - ❌ DON'T CHECK: "Show me trending news" (news changes).
-   - ❌ DON'T CHECK: "Get weather in Delhi" (weather is live data).
-
-3. **Headless Decision**:
-   - Data retrieval (news, posts, weather) → headless: true
-   - User wants to "watch", "see", "open" → headless: false
-
-4. **Minimal Steps & Isolation**:
-   - Each step runs in a COMPLETELY ISOLATED shell.
-   - If one BROWSER or AZURE_RUN action fulfills the request → Use ONE step.
-
-### EXAMPLES (LEARN FROM THESE)
-
-Request: "Create an Nginx server that returns Hello World on port 8080"
-Plan:
-[
-  {{
-    "description": "Check if Nginx is installed",
-    "action": "CHECK",
-    "command": "which nginx || exit 1"
-  }},
-  {{
-    "description": "Install Nginx if missing",
-    "action": "TERMINAL",
-    "command": "sudo apt-get update && sudo apt-get install -y nginx"
-  }},
-  {{
-    "description": "Write Nginx configuration block",
-    "action": "FILE_WRITE",
-    "command": "/etc/nginx/sites-available/hello_world",
-    "file_content": "server {{\n    listen 8080;\n    location / {{\n        return 200 'Hello World';\n        add_header Content-Type text/plain;\n    }}\n}}"
-  }},
-  {{
-    "description": "Enable site and restart Nginx",
-    "action": "TERMINAL",
-    "command": "sudo ln -s /etc/nginx/sites-available/hello_world /etc/nginx/sites-enabled/ && sudo systemctl restart nginx"
-  }},
-  {{
-    "description": "Verify Nginx is serving the response",
-    "action": "CHECK",
-    "command": "curl -f http://localhost:8080"
-  }}
-]
-
-Request: "show me latest news in delhi top 10"
-Plan:
-[
-  {{
-    "description": "Fetch top 10 latest news for Delhi",
-    "action": "BROWSER",
-    "command": "Search for latest news in Delhi and extract top 10 headlines with summaries",
-    "headless": true
-  }}
-]
-
-OUTPUT FORMAT (JSON ONLY):
-[
-  {{
-    "description": "Clear description of this step",
-    "action": "BROWSER" | "TERMINAL" | "CHECK" | "FILE_WRITE" | "SERVICE_MGT" | "AZURE_RUN",
-    "command": "Specific terminal command, browser instruction, absolute file path, or script for Azure",
-    "filename_pattern": "optional_pattern_for_downloads",
-    "file_content": "optional content for FILE_WRITE only",
-    "headless": true | false
-  }}
-]
+OUTPUT JSON ONLY:
+[{{"description":"...","action":"TERMINAL|BROWSER|CHECK|FILE_WRITE|FILE_READ|FILE_SEARCH|SERVICE_MGT|AZURE_RUN","command":"...","file_content":"only for FILE_WRITE","headless":"only for BROWSER","filename_pattern":"optional"}}]
 """
 
     def create_plan(self, request: str, context_str: str = "") -> List[TaskStep]:
+        import logging
+
         prompt = self._build_prompt(request, context_str)
         last_error = None
         for attempt, client in enumerate(self.llm_clients):
+            client_name = type(client).__name__
             if attempt > 0:
-                delay = (2**attempt) + random.random()
+                delay = min(1.0 + random.random(), 3.0)
                 time.sleep(delay)
             try:
                 response = client.generate_response(prompt).strip()
@@ -269,12 +172,19 @@ OUTPUT FORMAT (JSON ONLY):
                             use_cloud=step_data.get("headless", False),
                         )
                     )
+                logging.info(f"Plan built by {client_name} (attempt {attempt})")
                 return steps
-            except Exception as e:
+            except json.JSONDecodeError as e:
+                logging.warning(
+                    f"[Planner] {client_name} returned invalid JSON: {e} "
+                    f"| response[:200]={response[:200]!r}"
+                )
                 last_error = e
                 continue
-
-        import logging
+            except Exception as e:
+                logging.warning(f"[Planner] {client_name} failed: {e}")
+                last_error = e
+                continue
 
         logging.warning(
             f"Planning failed across all AI clients. Last error: {last_error}"
@@ -457,6 +367,123 @@ If it cannot be fixed, return: UNFIXABLE
                 step.description,
             )
         return table
+
+    _NOISE_DIRS = frozenset(
+        [
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            "site-packages",
+            ".git",
+            "dist",
+            ".cache",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "egg-info",
+        ]
+    )
+
+    @staticmethod
+    def _filter_noise(raw: str, noise: frozenset) -> str:
+        lines = raw.strip().splitlines()
+        clean = [
+            line
+            for line in lines
+            if not any(
+                f"/{d}/" in line or f"/{d}" == line.rstrip("/").rsplit("/", 1)[-1]
+                for d in noise
+            )
+        ]
+        return "\n".join(clean[:30])
+
+    async def _execute_file_search(self, step, context: dict) -> None:
+        """Run the FILE_SEARCH logic for a step, updating step in place."""
+
+        async def _run(cmd):
+            return await asyncio.to_thread(self.executor.run, cmd, False, None, False)
+
+        query = step.command.strip()
+
+        # Detect content search (explicit prefix)
+        is_content_search = query.startswith("content:")
+        if is_content_search:
+            query = query[len("content:") :]
+
+        # Detect if query is a path pattern like "advran/sites" or "foo/bar/baz"
+        is_path_pattern = "/" in query and not query.startswith("/")
+
+        fd_ok = (await _run("which fd"))[0] == 0
+        locate_ok = (await _run("which locate"))[0] == 0
+        rg_ok = (await _run("which rg"))[0] == 0
+
+        rc, out, err = 1, "", ""
+
+        if is_content_search:
+            safe_q = shlex.quote(query)
+            search_scopes = [
+                (".", None),
+                ("~", "(No local matches. Home directory results:)"),
+            ]
+            for scope, label in search_scopes:
+                if rg_ok:
+                    cmd = f"rg -l --max-count 1 -- {safe_q} {scope} 2>/dev/null | head -n 30"
+                else:
+                    cmd = f"grep -rIl --max-count=1 -- {safe_q} {scope} 2>/dev/null | head -n 30"
+                rc, out, err = await _run(cmd)
+                out = self._filter_noise(out, self._NOISE_DIRS) if rc == 0 else out
+                if out.strip():
+                    if label:
+                        out = f"{label}\n{out}"
+                    break
+
+        elif is_path_pattern:
+            # Path-pattern search: "advran/sites" → find -path "*/advran/sites*"
+            safe_q = shlex.quote(f"*/{query}*" if not query.startswith("*") else query)
+            search_scopes = [
+                (".", 8, None),
+                ("~", 8, "(No local matches. Home directory results:)"),
+                ("/", 6, "(Full filesystem results:)"),
+            ]
+            for scope, depth, label in search_scopes:
+                cmd = f"find {scope} -maxdepth {depth} -ipath {safe_q} 2>/dev/null | head -n 30"
+                rc, out, err = await _run(cmd)
+                out = self._filter_noise(out, self._NOISE_DIRS) if rc == 0 else out
+                if out.strip():
+                    if label:
+                        out = f"{label}\n{out}"
+                    break
+
+        else:
+            # Simple name search: "sites", "config.py", ".bashrc"
+            safe_q = shlex.quote(query)
+            search_scopes = [
+                (".", 8, None),
+                ("~", 8, "(No local matches. Home directory results:)"),
+                ("/", 6, "(Full filesystem results:)"),
+            ]
+            for scope, depth, label in search_scopes:
+                if fd_ok:
+                    cmd = f"fd --hidden --no-ignore --max-results 30 {safe_q} {scope} 2>/dev/null"
+                elif locate_ok and scope in ("~", "/"):
+                    cmd = (
+                        f"locate -l 30 -i {shlex.quote('*' + query + '*')} 2>/dev/null"
+                    )
+                else:
+                    cmd = f"find {scope} -maxdepth {depth} -iname {shlex.quote('*' + query + '*')} 2>/dev/null | head -n 30"
+                rc, out, err = await _run(cmd)
+                out = self._filter_noise(out, self._NOISE_DIRS) if rc == 0 else out
+                if out.strip():
+                    if label:
+                        out = f"{label}\n{out}"
+                    break
+
+        step.output = out.strip() if rc == 0 else f"Search failed: {err}"
+        if not step.output:
+            step.output = "No matches found."
+        step.status = "success" if rc == 0 else "failed"
+        context["last_output"] = step.output
 
     async def execute_plan(
         self,
@@ -689,8 +716,31 @@ If it cannot be fixed, return: UNFIXABLE
                             step.status = "failed"
 
                     elif step.action == "TERMINAL":
-                        # Handle sudo interactively
-                        if "sudo" in step.command or SafetyCheck.is_sudo_required(
+                        # Auto-reroute misclassified find/locate commands to FILE_SEARCH
+                        _cmd_lower = step.command.strip().lower()
+                        _rerouted = False
+                        if re.match(
+                            r"^(sudo\s+)?(find\s+/|locate\s+|fd\s+)", _cmd_lower
+                        ):
+                            _search_target = ""
+                            _name_match = re.search(
+                                r'-(?:i?name|path)\s+["\']?\*?([^"\'*\s]+)',
+                                step.command,
+                            )
+                            if _name_match:
+                                _search_target = _name_match.group(1)
+                            else:
+                                parts = step.command.strip().split()
+                                _search_target = parts[-1] if len(parts) > 1 else ""
+                                _search_target = _search_target.strip("\"'*/")
+                            if _search_target:
+                                step.action = "FILE_SEARCH"
+                                step.command = _search_target
+                                _rerouted = True
+
+                        if _rerouted:
+                            await self._execute_file_search(step, context)
+                        elif "sudo" in step.command or SafetyCheck.is_sudo_required(
                             step.command
                         ):
                             live.stop()
@@ -705,21 +755,28 @@ If it cannot be fixed, return: UNFIXABLE
                                 stderr = ""
                             finally:
                                 live.start()
+
+                            if return_code == 0:
+                                context["last_output"] = stdout
+                            step.output = (
+                                stdout
+                                if return_code == 0
+                                else f"Failed (RC={return_code}): {stderr if stderr else 'Interactive error'}"
+                            )
+                            step.status = "success" if return_code == 0 else "failed"
                         else:
                             return_code, stdout, stderr = await asyncio.to_thread(
                                 self.executor.run, step.command, False, None, False
                             )
 
-                        # Store output for context
-                        if return_code == 0:
-                            context["last_output"] = stdout
-
-                        step.output = (
-                            stdout
-                            if return_code == 0
-                            else f"Failed (RC={return_code}): {stderr if stderr else 'Interactive error'}"
-                        )
-                        step.status = "success" if return_code == 0 else "failed"
+                            if return_code == 0:
+                                context["last_output"] = stdout
+                            step.output = (
+                                stdout
+                                if return_code == 0
+                                else f"Failed (RC={return_code}): {stderr if stderr else 'Interactive error'}"
+                            )
+                            step.status = "success" if return_code == 0 else "failed"
 
                     elif step.action == "FILE_WRITE":
                         if not step.file_content:
@@ -797,90 +854,7 @@ If it cannot be fixed, return: UNFIXABLE
                             step.status = "failed"
 
                     elif step.action == "FILE_SEARCH":
-                        query = step.command.strip()
-                        safe_query = shlex.quote(query)
-                        _NOISE_DIRS = [
-                            ".venv",
-                            "venv",
-                            "node_modules",
-                            "__pycache__",
-                            "site-packages",
-                            ".git",
-                            "dist",
-                            ".cache",
-                            ".tox",
-                            ".mypy_cache",
-                            ".pytest_cache",
-                            "egg-info",
-                        ]
-
-                        def _filter_noise(raw: str) -> str:
-                            lines = raw.strip().splitlines()
-                            clean = [
-                                line
-                                for line in lines
-                                if not any(
-                                    f"/{d}/" in line
-                                    or f"/{d}" == line.rstrip("/").rsplit("/", 1)[-1]
-                                    for d in _NOISE_DIRS
-                                )
-                            ]
-                            return "\n".join(clean[:15])
-
-                        # Check for fd / rg availability (fast + .gitignore-aware)
-                        fd_ok = (
-                            await asyncio.to_thread(
-                                self.executor.run, "which fd", False, None, False
-                            )
-                        )[0] == 0
-                        rg_ok = (
-                            await asyncio.to_thread(
-                                self.executor.run, "which rg", False, None, False
-                            )
-                        )[0] == 0
-
-                        if "." in query and " " not in query:
-                            if fd_ok:
-                                search_cmd = f"fd --hidden --no-ignore --max-results 30 {safe_query} ."
-                            else:
-                                search_cmd = f"find . -maxdepth 5 -name '*'{safe_query}'*' -not -path '*/.*' | head -n 30"
-                            rc, out, err = await asyncio.to_thread(
-                                self.executor.run, search_cmd, False, None, False
-                            )
-                            out = _filter_noise(out) if rc == 0 else out
-
-                            if not out.strip():
-                                check_locate = "which locate"
-                                l_rc, _, _ = await asyncio.to_thread(
-                                    self.executor.run, check_locate, False, None, False
-                                )
-                                if l_rc == 0:
-                                    global_cmd = f"locate -l 30 '*'{safe_query}'*'"
-                                else:
-                                    global_cmd = f"find / -name '*'{safe_query}'*' 2>/dev/null | head -n 30"
-                                rc, out, err = await asyncio.to_thread(
-                                    self.executor.run, global_cmd, False, None, False
-                                )
-                                out = _filter_noise(out) if rc == 0 else out
-                                if out.strip():
-                                    out = f"(No local matches. Global results:)\n{out}"
-                        else:
-                            if rg_ok:
-                                search_cmd = f"rg -l --max-count 1 -- {safe_query} . | head -n 30"
-                            else:
-                                search_cmd = f"grep -rIl --max-count=1 -- {safe_query} . | head -n 30"
-                            rc, out, err = await asyncio.to_thread(
-                                self.executor.run, search_cmd, False, None, False
-                            )
-                            out = _filter_noise(out) if rc == 0 else out
-
-                        step.output = (
-                            out.strip() if rc == 0 else f"Search failed: {err}"
-                        )
-                        if not step.output:
-                            step.output = "No matches found."
-                        step.status = "success" if rc == 0 else "failed"
-                        context["last_output"] = step.output
+                        await self._execute_file_search(step, context)
 
                     elif step.action == "AZURE_RUN":
                         import secrets

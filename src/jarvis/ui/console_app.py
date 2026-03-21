@@ -639,9 +639,8 @@ class NexusApp:
                 try:
                     found_steps = set()
 
-                    # Ensure context components are strings
-                    safe_recent = str(recent_context or "")
-                    safe_memory = str(context_str or "")
+                    safe_recent = str(recent_context or "")[:500]
+                    safe_memory = str(context_str or "")[:1000]
 
                     if self.orchestrator is None:
                         return

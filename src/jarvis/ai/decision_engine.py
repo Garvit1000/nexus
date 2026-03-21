@@ -220,13 +220,19 @@ class DecisionEngine:
                 action="COMMAND", command="/search", args=query, confidence=0.9
             )
 
-        # 4. Local File Search
-        if text.startswith("find file") or text.startswith("search file"):
-            query = text.replace("find file", "").replace("search file", "").strip()
+        # 4. File / Directory Search (local + global)
+        file_search_patterns = [
+            r"^find\s+(me\s+)?(the\s+)?(file|folder|directory|path)",
+            r"^search\s+(for\s+)?(file|folder|directory)",
+            r"^(where\s+is|locate)\s+",
+            r"^find\s+.*\b(folder|directory|file|path)\b",
+            r"\bfind\s+.*\b(in|inside|under)\b.*\b(directory|folder)\b",
+        ]
+        if any(re.search(pat, text) for pat in file_search_patterns):
             return Intent(
                 action="PLAN",
                 confidence=1.0,
-                reasoning="Direct request to search local filesystem.",
+                reasoning="Direct request to search filesystem — will use FILE_SEARCH.",
             )
 
         # 5. File Content Inspection
@@ -253,7 +259,9 @@ class DecisionEngine:
                     f"recent task action {query_text}", limit=2
                 )
                 if recent_actions:
-                    memory_context = f"\n### RECENT MEMORY\n{recent_actions}\n"
+                    memory_context = (
+                        f"\n### RECENT MEMORY\n{str(recent_actions)[:500]}\n"
+                    )
             except Exception:
                 pass  # Silent fail if memory unavailable
 
@@ -281,71 +289,28 @@ class DecisionEngine:
 
         if active_client:
             # Build enhanced prompt with examples and context
-            prompt = f"""
-You are Nexus, an autonomous AI agent designed for Linux systems.
-You are NOT a chatbot. You are a DOER.
-
-### YOUR MENTAL MODEL
-1. **Analyze First**: Understand the user's *true intent*.
-2. **Action Over Talk**: If the user asks to "check", "get", "show me", "monitor", or "install" something, you MUST DO IT, not talk about it.
-3. **NO CHAT SCRIPTS**: Never just *print* a script in CHAT.
-   - If user asks "Write a script to X", use `PLAN` to CREATE the file (e.g. `write_to_file`).
-   - actual *execution* is better than a script.
-
-### ACTION PROTOCOLS
-- **COMMAND**: Trivial, single-step tasks (e.g. "update system", "install git").
-- **PLAN**: Complex tasks, web interactions, or multi-step verifications.
-- **SEARCH**: Simple fact lookups (e.g. "who is CEO of Google?").
-- **CHAT**: ONLY for greeting, philosophy, or when the user explicitly asks for an explanation/opinion.
+            prompt = f"""Nexus intent router. Classify the user's request into one action.
 {memory_context}{session_context}
-### USER INPUT
-"{text}"
+ACTIONS:
+- COMMAND: single-step (install/remove/update). Use "command":"/install docker"
+- PLAN: multi-step, web, file ops, system checks, anything requiring execution
+- SEARCH: simple fact lookup ("who is CEO of Google?")
+- CHAT: greeting, opinion, explanation ONLY
+- CLARIFY: if intent is very ambiguous (confidence<0.70), provide clarification_options
 
-### FEW-SHOT EXAMPLES (Learn from these patterns)
-User: "Show me top 10 hacker news posts"
-→ {{"action": "PLAN", "confidence": 0.95, "reasoning": "User wants live data from web, requires scraping"}}
+RULES: "show me/get/fetch/find/check/download X" → PLAN. "install X" → COMMAND. When in doubt → PLAN.
 
-User: "install docker"
-→ {{"action": "COMMAND", "command": "/install docker", "confidence": 0.98, "reasoning": "Simple package installation"}}
+INPUT: "{text}"
 
-User: "what is docker?"
-→ {{"action": "CHAT", "confidence": 0.90, "reasoning": "Informational question, no action needed"}}
+EXAMPLES:
+"install docker" → {{"action":"COMMAND","command":"/install docker","confidence":0.98,"reasoning":"package install"}}
+"show me HN posts" → {{"action":"PLAN","confidence":0.95,"reasoning":"web data retrieval"}}
+"what is docker?" → {{"action":"CHAT","confidence":0.90,"reasoning":"informational"}}
+"who is CEO of Google?" → {{"action":"SEARCH","confidence":0.95,"reasoning":"fact lookup"}}
+"find my bashrc" → {{"action":"PLAN","confidence":0.95,"reasoning":"file search task"}}
 
-User: "check my disk space"
-→ {{"action": "PLAN", "confidence": 0.85, "reasoning": "Requires checking system state and formatting output"}}
-
-User: "who is the CEO of Google?"
-→ {{"action": "SEARCH", "confidence": 0.95, "reasoning": "Simple fact lookup, use Google search"}}
-
-User: "download the latest version of VSCode"
-→ {{"action": "PLAN", "confidence": 0.92, "reasoning": "Multi-step: find download link, download, install"}}
-
-User: "now check if it is running and close it if it is"
-→ {{"action": "PLAN", "confidence": 0.95, "reasoning": "Follow-up sysadmin action requesting state check and service management"}}
-
-### DECISION HEURISTICS
-To make your decision, ask yourself:
-1. "Is the user asking me to perform an action?" → Yes = PLAN or COMMAND.
-2. "Does this require checking a website (e.g. 'show me HN', 'fetch posts')?" → Yes = PLAN.
-3. "Is this a simple fact lookup?" → Yes = SEARCH.
-4. "Is this just a chat/explanation?" → Yes = CHAT.
-
-### CRITICAL RULES
-- If the user says "Show me X", "Get X", "Display X", "Give me X", "Fetch X" → ALWAYS choose PLAN, NEVER CHAT.
-- If the user asks for "posts", "data", "results", "list", "top 10", "latest" → PLAN (they want live data).
-- NEVER return a script/code in CHAT unless explicitly asked "write a script" or "show me the code".
-- When in doubt between PLAN and CHAT: Choose PLAN (it's better to attempt action than just talk).
-- If user says "now X" or references "it/them/that" → They likely want follow-up action on previous task.
-- AMBIGUITY TRIGGER: If the user's request is extremely vague, unspecific, or you are guessing their intent (confidence < 0.70), YOU MUST set action to "CLARIFY" and provide 2-3 multiple choice options in "clarification_options".
-
-OUTPUT FORMAT (JSON ONLY):
-{{
-  "action": "PLAN" | "COMMAND" | "CHAT" | "SEARCH" | "CLARIFY",
-  "command": "/command args" (only if action is COMMAND),
-  "confidence": <float 0.0-1.0>,
-  "reasoning": "<explanation>",
-  "clarification_options": ["Option 1?", "Option 2?", "Something else?"] (ONLY if action is CLARIFY)
-}}
+JSON ONLY:
+{{"action":"PLAN|COMMAND|CHAT|SEARCH|CLARIFY","command":"only if COMMAND","confidence":0.0-1.0,"reasoning":"...","clarification_options":["only","if","CLARIFY"]}}
 """
             try:
                 # We use a lower temperature if possible, but our client interface is simple.

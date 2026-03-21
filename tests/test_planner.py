@@ -104,4 +104,4 @@ class TestPlannerFallback:
         # sleep must be called at least once (for attempt=1)
         mock_sleep.assert_called_once()
         delay = mock_sleep.call_args.args[0]
-        assert delay >= 2.0  # 2^1 + jitter >= 2.0
+        assert 1.0 <= delay <= 3.0  # capped linear backoff

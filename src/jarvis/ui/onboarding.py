@@ -54,6 +54,17 @@ class OnboardingUI:
         self.console.print("[dim]Used for ultra-fast responses where applicable.[/dim]")
         groq_key = Prompt.ask("Enter Groq API Key (Press Enter to skip)", password=True)
 
+        # Anthropic / Claude (Optional)
+        self.console.print(
+            "\n[bold cyan]4. Anthropic (Claude) API Key[/bold cyan] [green](Optional)[/green]"
+        )
+        self.console.print(
+            "[dim]High-quality reasoning fallback. Supports long context.[/dim]"
+        )
+        anthropic_key = Prompt.ask(
+            "Enter Anthropic API Key (Press Enter to skip)", password=True
+        )
+
         # 2. Memory Setup
         # Supermemory is provided by the system ("Ours"), so we don't ask the user for the key.
         # We just confirm if they want to use the intelligent features.
@@ -83,9 +94,8 @@ class OnboardingUI:
             google_api_key=google_key,
             openrouter_api_key=openrouter_key,
             groq_api_key=groq_key if groq_key else None,
+            anthropic_api_key=anthropic_key if anthropic_key else None,
             use_supermemory=use_memory,
-            # supermemory_api_key IS NOT SAVED HERE, it relies on ENV or pre-existing config
-            # Set default provider preference
             model_provider="openrouter",
         )
         sleep(1)
