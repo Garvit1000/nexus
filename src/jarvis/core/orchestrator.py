@@ -71,11 +71,17 @@ class Planner:
                 if rag_hits:
                     hit_text = str(rag_hits).lower()
                     stop_words = {
-                        "install", "update", "please", "nexus",
-                        "show", "give", "build",
+                        "install",
+                        "update",
+                        "please",
+                        "nexus",
+                        "show",
+                        "give",
+                        "build",
                     }
                     req_keywords = {
-                        kw for kw in request.lower().split()
+                        kw
+                        for kw in request.lower().split()
                         if len(kw) > 3 and kw not in stop_words
                     }
                     if any(kw in hit_text for kw in req_keywords):
@@ -362,17 +368,29 @@ If it cannot be fixed, return: UNFIXABLE
             )
         return table
 
-    _NOISE_DIRS = frozenset([
-        ".venv", "venv", "node_modules", "__pycache__", "site-packages",
-        ".git", "dist", ".cache", ".tox", ".mypy_cache", ".pytest_cache",
-        "egg-info",
-    ])
+    _NOISE_DIRS = frozenset(
+        [
+            ".venv",
+            "venv",
+            "node_modules",
+            "__pycache__",
+            "site-packages",
+            ".git",
+            "dist",
+            ".cache",
+            ".tox",
+            ".mypy_cache",
+            ".pytest_cache",
+            "egg-info",
+        ]
+    )
 
     @staticmethod
     def _filter_noise(raw: str, noise: frozenset) -> str:
         lines = raw.strip().splitlines()
         clean = [
-            line for line in lines
+            line
+            for line in lines
             if not any(
                 f"/{d}/" in line or f"/{d}" == line.rstrip("/").rsplit("/", 1)[-1]
                 for d in noise
@@ -384,16 +402,14 @@ If it cannot be fixed, return: UNFIXABLE
         """Run the FILE_SEARCH logic for a step, updating step in place."""
 
         async def _run(cmd):
-            return await asyncio.to_thread(
-                self.executor.run, cmd, False, None, False
-            )
+            return await asyncio.to_thread(self.executor.run, cmd, False, None, False)
 
         query = step.command.strip()
 
         # Detect content search (explicit prefix)
         is_content_search = query.startswith("content:")
         if is_content_search:
-            query = query[len("content:"):]
+            query = query[len("content:") :]
 
         # Detect if query is a path pattern like "advran/sites" or "foo/bar/baz"
         is_path_pattern = "/" in query and not query.startswith("/")
@@ -451,7 +467,9 @@ If it cannot be fixed, return: UNFIXABLE
                 if fd_ok:
                     cmd = f"fd --hidden --no-ignore --max-results 30 {safe_q} {scope} 2>/dev/null"
                 elif locate_ok and scope in ("~", "/"):
-                    cmd = f"locate -l 30 -i {shlex.quote('*' + query + '*')} 2>/dev/null"
+                    cmd = (
+                        f"locate -l 30 -i {shlex.quote('*' + query + '*')} 2>/dev/null"
+                    )
                 else:
                     cmd = f"find {scope} -maxdepth {depth} -iname {shlex.quote('*' + query + '*')} 2>/dev/null | head -n 30"
                 rc, out, err = await _run(cmd)
@@ -722,9 +740,8 @@ If it cannot be fixed, return: UNFIXABLE
 
                         if _rerouted:
                             await self._execute_file_search(step, context)
-                        elif (
-                            "sudo" in step.command
-                            or SafetyCheck.is_sudo_required(step.command)
+                        elif "sudo" in step.command or SafetyCheck.is_sudo_required(
+                            step.command
                         ):
                             live.stop()
                             try:
@@ -746,9 +763,7 @@ If it cannot be fixed, return: UNFIXABLE
                                 if return_code == 0
                                 else f"Failed (RC={return_code}): {stderr if stderr else 'Interactive error'}"
                             )
-                            step.status = (
-                                "success" if return_code == 0 else "failed"
-                            )
+                            step.status = "success" if return_code == 0 else "failed"
                         else:
                             return_code, stdout, stderr = await asyncio.to_thread(
                                 self.executor.run, step.command, False, None, False
@@ -761,9 +776,7 @@ If it cannot be fixed, return: UNFIXABLE
                                 if return_code == 0
                                 else f"Failed (RC={return_code}): {stderr if stderr else 'Interactive error'}"
                             )
-                            step.status = (
-                                "success" if return_code == 0 else "failed"
-                            )
+                            step.status = "success" if return_code == 0 else "failed"
 
                     elif step.action == "FILE_WRITE":
                         if not step.file_content:

@@ -58,7 +58,9 @@ class OnboardingUI:
         self.console.print(
             "\n[bold cyan]4. Anthropic (Claude) API Key[/bold cyan] [green](Optional)[/green]"
         )
-        self.console.print("[dim]High-quality reasoning fallback. Supports long context.[/dim]")
+        self.console.print(
+            "[dim]High-quality reasoning fallback. Supports long context.[/dim]"
+        )
         anthropic_key = Prompt.ask(
             "Enter Anthropic API Key (Press Enter to skip)", password=True
         )

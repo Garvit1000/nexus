@@ -259,7 +259,9 @@ class DecisionEngine:
                     f"recent task action {query_text}", limit=2
                 )
                 if recent_actions:
-                    memory_context = f"\n### RECENT MEMORY\n{str(recent_actions)[:500]}\n"
+                    memory_context = (
+                        f"\n### RECENT MEMORY\n{str(recent_actions)[:500]}\n"
+                    )
             except Exception:
                 pass  # Silent fail if memory unavailable
 

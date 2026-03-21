@@ -151,9 +151,7 @@ if router_client:
 
 if openrouter_key:
     fallback_clients.append(
-        OpenRouterClient(
-            api_key=openrouter_key, model="moonshotai/kimi-k2-0905"
-        )
+        OpenRouterClient(api_key=openrouter_key, model="moonshotai/kimi-k2-0905")
     )
 
 if api_key:
