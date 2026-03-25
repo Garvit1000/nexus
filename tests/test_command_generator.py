@@ -124,6 +124,22 @@ class TestFallbackClients:
         assert primary.generate_response.call_count == 3
         fallback.generate_response.assert_called_once()
 
+    @patch("jarvis.ai.command_generator.time.sleep")
+    def test_fallback_memory_client_receives_add_memory(self, _mock_sleep):
+        """Gemini: store command-gen memory on the client that succeeded, not only primary."""
+        primary = MagicMock()
+        primary.generate_response.side_effect = RuntimeError("401 invalid")
+        primary_mem = MagicMock()
+        primary.memory_client = primary_mem
+        fallback = MagicMock()
+        fallback.generate_response.return_value = "echo fb"
+        fb_mem = MagicMock()
+        fallback.memory_client = fb_mem
+        gen = CommandGenerator(primary, _sys_info(), fallback_clients=[fallback])
+        gen.generate_command("x")
+        primary_mem.add_memory.assert_not_called()
+        fb_mem.add_memory.assert_called_once()
+
     def test_dedupes_same_client_in_fallback_list(self):
         shared = _mock_llm("echo once")
         gen = CommandGenerator(shared, _sys_info(), fallback_clients=[shared])

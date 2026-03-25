@@ -6,6 +6,7 @@ import random
 import os
 import re
 import shlex
+from pathlib import Path
 from typing import List, Dict, Optional, Union, Any
 from dataclasses import dataclass
 from rich.console import Console
@@ -127,8 +128,9 @@ SYSTEM OPERATIONS REFERENCE (use these exact procedures):
 - AppImage setup (FULL PROCEDURE — follow every step):
   1. chmod +x file.AppImage
   2. mkdir -p ~/.local/bin && cp file.AppImage ~/.local/bin/AppName.AppImage
-  3. Extract icon: cd /tmp && /path/to/App.AppImage --appimage-extract && find squashfs-root -maxdepth 2 -name '*.png' -o -name '*.svg' | head -1
-     Copy the best icon to ~/.local/share/icons/appname.png, then rm -rf /tmp/squashfs-root
+  3. Extract icon (always use a fresh dir — avoids squashfs-root collisions):
+     EXTRACT_DIR=$(mktemp -d /tmp/nexus-appimg.XXXXXX) && cd "$EXTRACT_DIR" && /path/to/App.AppImage --appimage-extract && find squashfs-root -maxdepth 2 -name '*.png' -o -name '*.svg' | head -1
+     Copy the best icon to ~/.local/share/icons/appname.png, then rm -rf "$EXTRACT_DIR"
   4. Create desktop entry with FILE_WRITE (DO NOT copy .desktop from squashfs-root — it has wrong paths):
      Path: ~/.local/share/applications/appname.desktop
      Content must use ABSOLUTE paths for Exec= and Icon= pointing to the ACTUAL installed locations.
@@ -138,7 +140,7 @@ SYSTEM OPERATIONS REFERENCE (use these exact procedures):
   If the app fails with "SUID sandbox helper" error, the --no-sandbox flag in Exec= line fixes it.
   NEVER run a bare AppImage path during setup (that launches the GUI and BLOCKS until the app exits).
   Use ONLY /path/to/App.AppImage --appimage-extract for integration steps; optional final step may run once with --no-sandbox for a quick test.
-  --appimage-extract on large files (100MB+) can take 5–20+ minutes — that is normal; use a dedicated temp dir (mktemp -d) under /tmp to avoid collisions.
+  --appimage-extract on large files (100MB+) can take 5–20+ minutes — that is normal; never use bare cd /tmp + squashfs-root without mktemp -d (parallel plans collide).
 - .deb install: sudo dpkg -i file.deb && sudo apt-get install -f -y (fixes broken deps)
   NEVER use apt/apt-get install with a .deb filename — dpkg -i is the correct tool.
 - .rpm install: sudo rpm -i file.rpm OR sudo dnf install ./file.rpm
@@ -179,7 +181,7 @@ EXAMPLES:
 [{{"action":"BROWSER","command":"Search latest Delhi news top 10 headlines","headless":true,"description":"Fetch Delhi news"}}]
 
 "setup AppImage at /home/user/Downloads/Recordly-linux-x64.AppImage" →
-[{{"action":"TERMINAL","command":"chmod +x /home/user/Downloads/Recordly-linux-x64.AppImage && mkdir -p ~/.local/bin && cp /home/user/Downloads/Recordly-linux-x64.AppImage ~/.local/bin/Recordly.AppImage","description":"Make executable and copy to user bin"}},{{"action":"TERMINAL","command":"cd /tmp && /home/user/Downloads/Recordly-linux-x64.AppImage --appimage-extract 2>/dev/null && mkdir -p ~/.local/share/icons && find squashfs-root -maxdepth 2 \\( -name '*.png' -o -name '*.svg' \\) -exec cp {{}} ~/.local/share/icons/recordly.png \\; ; rm -rf /tmp/squashfs-root","description":"Extract icon from AppImage"}},{{"action":"FILE_WRITE","command":"~/.local/share/applications/recordly.desktop","file_content":"[Desktop Entry]\\nName=Recordly\\nExec=$HOME/.local/bin/Recordly.AppImage --no-sandbox\\nIcon=$HOME/.local/share/icons/recordly.png\\nType=Application\\nCategories=Utility;\\nComment=Recordly screen recorder","description":"Create desktop entry with correct paths"}},{{"action":"TERMINAL","command":"update-desktop-database ~/.local/share/applications/ 2>/dev/null; true","description":"Update desktop database"}}]
+[{{"action":"TERMINAL","command":"chmod +x /home/user/Downloads/Recordly-linux-x64.AppImage && mkdir -p ~/.local/bin && cp /home/user/Downloads/Recordly-linux-x64.AppImage ~/.local/bin/Recordly.AppImage","description":"Make executable and copy to user bin"}},{{"action":"TERMINAL","command":"EXTRACT_DIR=$(mktemp -d /tmp/nexus-appimg.XXXXXX) && cd \"$EXTRACT_DIR\" && /home/user/Downloads/Recordly-linux-x64.AppImage --appimage-extract 2>/dev/null && mkdir -p ~/.local/share/icons && find squashfs-root -maxdepth 2 \\( -name '*.png' -o -name '*.svg' \\) -exec cp {{}} ~/.local/share/icons/recordly.png \\; ; rm -rf \"$EXTRACT_DIR\"","description":"Extract icon from AppImage in isolated temp dir"}},{{"action":"FILE_WRITE","command":"~/.local/share/applications/recordly.desktop","file_content":"[Desktop Entry]\\nName=Recordly\\nExec=$HOME/.local/bin/Recordly.AppImage --no-sandbox\\nIcon=$HOME/.local/share/icons/recordly.png\\nType=Application\\nCategories=Utility;\\nComment=Recordly screen recorder","description":"Create desktop entry with correct paths"}},{{"action":"TERMINAL","command":"update-desktop-database ~/.local/share/applications/ 2>/dev/null; true","description":"Update desktop database"}}]
 
 "install /home/user/Downloads/package.deb" →
 [{{"action":"TERMINAL","command":"sudo dpkg -i /home/user/Downloads/package.deb && sudo apt-get install -f -y","description":"Install deb package and fix dependencies"}}]
@@ -309,6 +311,42 @@ class Orchestrator:
             return Orchestrator._APPIMAGE_EXTRACT_TIMEOUT_SEC
         return None
 
+    @staticmethod
+    async def _file_write_via_userland(abs_path: Path, content: str) -> None:
+        """Create parent directories and write UTF-8 text. May raise OSError / PermissionError."""
+        parent_dir = abs_path.parent
+        await asyncio.to_thread(parent_dir.mkdir, parents=True, exist_ok=True)
+
+        def _write() -> None:
+            abs_path.write_text(content, encoding="utf-8")
+
+        await asyncio.to_thread(_write)
+
+    @staticmethod
+    async def _file_write_via_sudo_tee(abs_path: Path, content: str) -> tuple[int, str]:
+        """Run sudo mkdir -p on parent, then sudo tee for file body. Returns (returncode, stderr)."""
+        import subprocess
+
+        safe_path = shlex.quote(str(abs_path))
+        mkdir_cmd = f"sudo mkdir -p {shlex.quote(str(abs_path.parent))}"
+        await asyncio.to_thread(
+            subprocess.run,
+            mkdir_cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+        )
+        write_command = f"sudo tee {safe_path} > /dev/null"
+        process = await asyncio.to_thread(
+            subprocess.run,
+            write_command,
+            input=content,
+            text=True,
+            shell=True,
+            capture_output=True,
+        )
+        return process.returncode, (process.stderr or "")
+
     def _extract_missing_binary(self, error_output: str, command: str) -> Optional[str]:
         """
         Detect 'command not found' / 'No such file or directory' patterns and
@@ -363,6 +401,32 @@ class Orchestrator:
                 return m.group(1)
         return None
 
+    @staticmethod
+    def _extract_missing_path_from_filesystem_error(error_output: str) -> Optional[str]:
+        """
+        Pull a missing file/dir path from common 'no such file' style stderr.
+        Supports absolute paths, ./relative, and simple relative paths (not only /...).
+        """
+        import re as _re
+
+        text = error_output.strip()
+        patterns = [
+            # bash: cat: /tmp/x: No such file or directory
+            # bash: cat: myapp/cfg: No such file or directory
+            r":\s*((?:/|\.?/)[^\s:]+|(?:[\w.-]+/)+[\w.-]+|[\w][\w.-]*)\s*:\s*[Nn]o such file or directory",
+            # mkdir/touch: cannot create directory 'foo/bar': No such file or directory
+            r"(?:[Cc]annot create|[Cc]annot touch)\s+(?:directory\s+|file\s+)?['\"]([^'\"]+)['\"]",
+            # Phrase first, then path (some tools)
+            r"(?:[Nn]o such file or directory|cannot create)[:\s]+(?:for\s+)?['\"]?((?:/|\.?/|~/?)[\w./~-]+|(?:[\w.-]+/)+[\w.-]+|[\w][\w./~-]*)['\"]?(?:\s|$)",
+        ]
+        for pat in patterns:
+            m = _re.search(pat, text)
+            if m:
+                raw = m.group(1).strip().strip("'\"")
+                if raw and raw not in (".", ".."):
+                    return raw
+        return None
+
     def reflect_and_fix(self, failed_command: str, error_output: str) -> Optional[str]:
         """Self-healer: first try a fast local fix, then fall back to LLM."""
 
@@ -408,19 +472,27 @@ class Orchestrator:
                         if ".rpm" in t.lower():
                             return f"sudo rpm -i {t}"
 
-        if "no such file or directory" in error_lower and "sudo" not in error_lower:
-            import re as _re
+        if "sudo" not in error_lower and (
+            "no such file or directory" in error_lower
+            or "cannot create" in error_lower
+            or "cannot touch" in error_lower
+        ):
+            import shlex as _shlex
 
-            dir_match = _re.search(
-                r"(?:cannot create|no such file or directory)[:\s]*['\"]?(/[\w./\-]+)",
-                error_output,
-                _re.IGNORECASE,
+            missing_path_str = self._extract_missing_path_from_filesystem_error(
+                error_output
             )
-            if dir_match:
-                missing_path = dir_match.group(1)
-                parent = "/".join(missing_path.rstrip("/").split("/")[:-1])
-                if parent and len(parent) > 1:
-                    return f"mkdir -p {parent} && {failed_command}"
+            if missing_path_str:
+                parent = Path(missing_path_str).expanduser().parent
+                # Skip cwd-only and filesystem root — mkdir -p is wrong or a no-op.
+                if (
+                    parent != Path(".")
+                    and str(parent) != "."
+                    and parent != Path("/")
+                ):
+                    return (
+                        f"mkdir -p {_shlex.quote(str(parent))} && {failed_command}"
+                    )
 
         if "permission denied" in error_lower and "sudo" not in cmd_lower:
             return f"sudo {failed_command}"
@@ -940,62 +1012,39 @@ If it cannot be fixed, return: UNFIXABLE
                             step.output = "Error: No absolute file path provided in command field for FILE_WRITE action."
                             step.status = "failed"
                         else:
-                            from pathlib import Path as _WPath
-
                             file_path = step.command.strip()
                             content = step.file_content
-                            abs_path = _WPath(os.path.expanduser(file_path)).resolve()
-                            parent_dir = abs_path.parent
-                            home_dir = _WPath.home()
+                            abs_path = Path(file_path).expanduser().resolve()
+                            home_dir = Path.home()
 
                             # Determine if we can write without sudo
-                            is_user_path = str(abs_path).startswith(str(home_dir))
+                            is_user_path = SafetyCheck.is_path_within_any_root(
+                                abs_path, [home_dir]
+                            )
 
                             live.stop()
                             try:
                                 if is_user_path:
-                                    # User-writable path: use Python open() directly (no sudo needed)
-                                    await asyncio.to_thread(
-                                        parent_dir.mkdir, parents=True, exist_ok=True
+                                    await self._file_write_via_userland(
+                                        abs_path, content
                                     )
-
-                                    def _write_file():
-                                        abs_path.write_text(content, encoding="utf-8")
-
-                                    await asyncio.to_thread(_write_file)
-                                    step.output = f"Successfully wrote to {file_path}"
+                                    step.output = (
+                                        f"Successfully wrote to {file_path}"
+                                    )
                                     step.status = "success"
                                 else:
-                                    # System path: use sudo tee
-                                    import subprocess
-
-                                    safe_path = shlex.quote(str(abs_path))
-                                    mkdir_cmd = (
-                                        f"sudo mkdir -p {shlex.quote(str(parent_dir))}"
+                                    rc, err = await self._file_write_via_sudo_tee(
+                                        abs_path, content
                                     )
-                                    await asyncio.to_thread(
-                                        subprocess.run,
-                                        mkdir_cmd,
-                                        shell=True,
-                                        capture_output=True,
-                                        text=True,
-                                    )
-                                    write_command = f"sudo tee {safe_path} > /dev/null"
-                                    process = await asyncio.to_thread(
-                                        subprocess.run,
-                                        write_command,
-                                        input=content,
-                                        text=True,
-                                        shell=True,
-                                        capture_output=True,
-                                    )
-                                    if process.returncode == 0:
+                                    if rc == 0:
                                         step.output = (
                                             f"Successfully wrote to {file_path}"
                                         )
                                         step.status = "success"
                                     else:
-                                        step.output = f"Failed to write file (RC={process.returncode}): {process.stderr}"
+                                        step.output = (
+                                            f"Failed to write file (RC={rc}): {err}"
+                                        )
                                         step.status = "failed"
                             except Exception as fe:
                                 step.output = f"FILE_WRITE Exception: {fe}"
@@ -1006,14 +1055,11 @@ If it cannot be fixed, return: UNFIXABLE
                     elif step.action == "FILE_READ":
                         file_path = step.command.strip()
                         try:
-                            from pathlib import Path
-
                             abs_path = Path(file_path).expanduser().resolve()
                             home_dir = Path.home()
                             cwd = Path.cwd()
-                            if not (
-                                str(abs_path).startswith(str(home_dir))
-                                or str(abs_path).startswith(str(cwd))
+                            if not SafetyCheck.is_path_within_any_root(
+                                abs_path, [home_dir, cwd]
                             ):
                                 step.output = f"Path traversal blocked: {abs_path} is outside home and cwd."
                                 step.status = "failed"
@@ -1214,48 +1260,33 @@ If it cannot be fixed, return: UNFIXABLE
                 if step.status == "failed":
                     # FILE_WRITE: attempt a direct local retry before entering LLM heal loop
                     if step.action == "FILE_WRITE" and step.file_content:
-                        from pathlib import Path as _HealPath
-
-                        _fw_path = _HealPath(
+                        _fw_path = Path(
                             os.path.expanduser(step.command.strip())
                         ).resolve()
-                        _fw_parent = _fw_path.parent
                         try:
                             live.stop()
-                            await asyncio.to_thread(
-                                _fw_parent.mkdir, parents=True, exist_ok=True
-                            )
-
-                            def _heal_write():
-                                _fw_path.write_text(step.file_content, encoding="utf-8")
-
-                            await asyncio.to_thread(_heal_write)
-                            step.output = f"Successfully wrote to {step.command.strip()} (retry via direct write)"
-                            step.status = "success"
-                        except PermissionError:
-                            # Fall back to sudo tee
-                            import subprocess as _sp
-
-                            safe_p = shlex.quote(str(_fw_path))
-                            _mk = f"sudo mkdir -p {shlex.quote(str(_fw_parent))}"
-                            await asyncio.to_thread(
-                                _sp.run, _mk, shell=True, capture_output=True
-                            )
-                            _wc = f"sudo tee {safe_p} > /dev/null"
-                            _proc = await asyncio.to_thread(
-                                _sp.run,
-                                _wc,
-                                input=step.file_content,
-                                text=True,
-                                shell=True,
-                                capture_output=True,
-                            )
-                            if _proc.returncode == 0:
-                                step.output = f"Successfully wrote to {step.command.strip()} (retry via sudo)"
+                            try:
+                                await self._file_write_via_userland(
+                                    _fw_path, step.file_content
+                                )
+                                step.output = (
+                                    f"Successfully wrote to {step.command.strip()} "
+                                    "(retry via direct write)"
+                                )
                                 step.status = "success"
-                            # else: leave failed status, fall through to normal output
-                        except Exception:
-                            pass  # leave failed status
+                            except PermissionError:
+                                rc, _err = await self._file_write_via_sudo_tee(
+                                    _fw_path, step.file_content
+                                )
+                                if rc == 0:
+                                    step.output = (
+                                        f"Successfully wrote to {step.command.strip()} "
+                                        "(retry via sudo)"
+                                    )
+                                    step.status = "success"
+                                # else: keep prior failure output for LLM heal loop
+                            except Exception:
+                                pass  # leave failed status
                         finally:
                             live.start()
 

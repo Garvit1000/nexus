@@ -119,6 +119,24 @@ class TestReflectAndFix:
         fix = orch.reflect_and_fix("ls /root", "Permission denied")
         assert fix == "sudo ls /root"
 
+    def test_nosuchfile_relative_path_mkdir_parent_quoted(self):
+        orch = _mock_orchestrator()
+        err = "cat: myapp/config.json: No such file or directory"
+        fix = orch.reflect_and_fix("cat myapp/config.json", err)
+        assert fix is not None
+        assert fix.startswith("mkdir -p ")
+        assert "myapp" in fix
+        assert fix.endswith(" && cat myapp/config.json")
+
+    def test_nosuchfile_absolute_path_mkdir(self):
+        orch = _mock_orchestrator()
+        err = "touch: cannot touch '/opt/foo/bar': No such file or directory"
+        fix = orch.reflect_and_fix("touch /opt/foo/bar", err)
+        assert fix is not None
+        assert "mkdir -p" in fix
+        assert "/opt/foo" in fix
+        assert "touch /opt/foo/bar" in fix
+
 
 class TestGenerateView:
     def test_table_has_four_columns(self):

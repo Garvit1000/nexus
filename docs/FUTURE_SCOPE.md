@@ -111,7 +111,7 @@ These used to sit in *High Priority*; they are **done** and described in detail 
 - **`rm -rf /` heuristics**: Root-delete detection no longer false-positives on `/tmp/...`, `/var/tmp/...`, or a **newline** between `/` and the rest of the path (wrapped shell lines). Stricter lookahead uses horizontal whitespace only where needed.
 - **Command generator retries**: Same-provider backoff on 429/timeouts/5xx, then fallback clients; empty LLM output retries instead of raising immediately.
 - **Orchestrator bugfix**: Removed inner `import os` inside `execute_plan` that shadowed the module and caused `UnboundLocalError` on `FILE_WRITE` self-heal when no `BROWSER` step had run.
-- **Test suite**: **176** `pytest` tests (security regressions for `rm` heuristics, command-generator fallback/retry cases).
+- **Test suite**: **182** `pytest` tests (security regressions for `rm` heuristics, path allowlists, command-generator fallback/retry cases).
 
 ### System Operations Overhaul (March 2026)
 - **DIRECT_EXECUTE Intent**: New `DIRECT_EXECUTE` action in the Decision Engine for simple, single-command operations (chmod, mkdir, cp, mv, tar, ls, df, free, etc.). Bypasses the full PLAN pipeline — no plan table, no confirmation, just generates and runs the command immediately. Heuristic regex patterns + LLM router awareness.
@@ -125,7 +125,7 @@ These used to sit in *High Priority*; they are **done** and described in detail 
 - **FILE_SEARCH Intelligent Filtering**: Smart noise filter excludes `site-packages`, `.venv`, `node_modules`, `__pycache__` from results. Prefers `fd`/`rg` over `find`/`grep`. Two-tier search with meaningful-result threshold.
 - **TUI Slash Commands Fixed**: `/find`, `/read`, `/do` registered as first-class TUI commands. `/search` gracefully handles non-Google providers.
 - **Azure Log Noise Eliminated**: Output marker (`===NEXUS_OUTPUT_START===`) separates bootstrap noise from command results. Only meaningful output shown to user.
-- **Test Suite Expanded**: 176+ automated tests across 10+ test files covering executor, planner, security, decision engine, audit logger, config manager, session manager, command generator, LLM client, package manager, and orchestrator.
+- **Test Suite Expanded**: 182+ automated tests across 10+ test files covering executor, planner, security, decision engine, audit logger, config manager, session manager, command generator, LLM client, package manager, and orchestrator.
 - **Security Hardened**: Shell injection fixed in FILE_SEARCH, `find` command, and AZURE_RUN. LLM-generated commands validated through SafetyCheck. Path traversal protection on `read`. Package name injection prevented. Config file permissions set to 0o600. Browser `disable_security` set to False.
 - **Crash Bugs Fixed**: `ImportError` on `nexus read`, `AttributeError` on session save, `NameError` in PLAN fallback, `asyncio` nested loop in browser manager.
 - **CI/CD Improved**: Dependency sync between `pyproject.toml` and `requirements.txt`. CI matrix for `[all]` extras. Ruff linting + `pip-audit` security scanning added.

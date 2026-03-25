@@ -16,6 +16,7 @@ load_dotenv()
 from .core.config_manager import ConfigManager
 from .core.system_detector import SystemDetector
 from .core.executor import CommandExecutor
+from .core.security import SafetyCheck
 from .modules.package_manager import AppInstaller
 
 try:
@@ -471,7 +472,7 @@ def read(path: str):
 
     home = Path.home()
     cwd = Path.cwd()
-    allowed = str(abs_path).startswith(str(home)) or str(abs_path).startswith(str(cwd))
+    allowed = SafetyCheck.is_path_within_any_root(abs_path, [home, cwd])
     if not allowed:
         console.print(
             f"[red]Error:[/red] Reading files outside your home directory is not allowed: {abs_path}"

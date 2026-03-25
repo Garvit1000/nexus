@@ -15,7 +15,7 @@
 
 ### Maturity snapshot (March 2026)
 
-Nexus is best described as **production-leaning for a power-user TUI**: the execution stack (planner, executor, security gate, audit log, self-heal loop, LLM fallbacks) is **well tested** (**176** automated `pytest` cases) and hardened from real failure modes (rate limits, bad JSON plans, sudo/interactive edge cases). Remaining risk is mostly **product** surface area: no automatic rollback checkpoints yet, `FILE_WRITE` always **replaces** whole files (no first-class append/patch action), and plans are still sequential. For **AppImage + desktop integration**, the planner encodes a full procedure (extract, icon, `FILE_WRITE` `.desktop`, `update-desktop-database`, Electron `--no-sandbox`); extraction of large images can take many minutes and is supported with an extended subprocess timeout.
+Nexus is best described as **production-leaning for a power-user TUI**: the execution stack (planner, executor, security gate, audit log, self-heal loop, LLM fallbacks) is **well tested** (**182** automated `pytest` cases) and hardened from real failure modes (rate limits, bad JSON plans, sudo/interactive edge cases). Remaining risk is mostly **product** surface area: no automatic rollback checkpoints yet, `FILE_WRITE` always **replaces** whole files (no first-class append/patch action), and plans are still sequential. For **AppImage + desktop integration**, the planner encodes a full procedure (extract, icon, `FILE_WRITE` `.desktop`, `update-desktop-database`, Electron `--no-sandbox`); extraction of large images can take many minutes and is supported with an extended subprocess timeout.
 
 ## Architecture Overview
 
@@ -384,7 +384,7 @@ graph TB
 - **Smart Resume**: Checks if files already exist before downloading
 - **Self-Healing**: Auto-fixes failed commands using LLM reflection (plus fast local heuristics for common install/path errors)
 - **FILE_WRITE**: Writes **full file contents** (overwrite). Paths under your **home directory** use Python `write_text` (no sudo); **system paths** use `sudo mkdir -p` + `sudo tee`. Failed writes retry once with mkdir / sudo (see self-heal block). There is **no** `FILE_APPEND` yet — to append (e.g. a line in `~/.zshrc`), the planner typically uses a **TERMINAL** step (`echo '…' >> ~/.zshrc`) which is subject to normal shell safety checks and confirmation.
-- **AppImage / desktop flow (planner-guided)**: chmod + copy to `~/.local/bin`, **`--appimage-extract`** (non-interactive, long timeout for big bundles), copy icon, **`FILE_WRITE`** a fresh `~/.local/share/applications/*.desktop` (not the squashfs copy — wrong `Exec`/`Icon`), **`update-desktop-database`**, and for Electron/Chromium bundles **`--no-sandbox`** on `Exec=`. Residual gaps: concurrent extracts should use a **dedicated `mktemp -d`** under `/tmp` to avoid `squashfs-root` collisions; icons are “best effort” from a shallow `find`.
+- **AppImage / desktop flow (planner-guided)**: chmod + copy to `~/.local/bin`, **`--appimage-extract`** inside **`mktemp -d /tmp/nexus-appimg.XXXXXX`** (avoids `squashfs-root` collisions across concurrent plans), copy icon, **`FILE_WRITE`** a fresh `~/.local/share/applications/*.desktop` (not the squashfs copy — wrong `Exec`/`Icon`), **`update-desktop-database`**, and for Electron/Chromium bundles **`--no-sandbox`** on `Exec=`. Residual gap: icons remain best effort from a shallow `find`.
 - **Live UI**: Real-time progress tracking with Rich tables
 
 #### `executor.py` & `security.py` — Safe Command Execution
@@ -530,7 +530,7 @@ nexus search "best restaurants in Dubai"
 
 ## Testing
 
-Nexus ships with **176 automated pytest tests** across 10+ test files, covering every critical code path. Run them anytime:
+Nexus ships with **182 automated pytest tests** across 10+ test files, covering every critical code path. Run them anytime:
 
 ```bash
 # Install dev dependencies (first time only)
@@ -548,7 +548,7 @@ pytest tests/test_executor.py -v
 
 ### Test Coverage Map
 
-#### `tests/test_security.py` — 24 tests
+#### `tests/test_security.py` — 27 tests
 **What it checks:** The `CommandValidator` and `SafetyCheck` layer that sits before every command execution.
 
 | Test Group | Checks |
@@ -559,6 +559,7 @@ pytest tests/test_executor.py -v
 | `TestSafetyCheckIntegration` | `SafetyCheck.check_command()` raises `SecurityViolation` on blocked commands, returns `True` on safe ones |
 | `TestSudoDetection` | `apt`, `systemctl`, writing to `/etc/` are correctly flagged as requiring sudo; `chmod` on user paths is not forced interactive |
 | `TestRmRfHeuristics` | `rm -rf /tmp/...` and similar are **not** misread as `rm -rf /`; newline after `/` does not false-positive |
+| `TestPathWithinRoots` | File read/write allowlists use proper path subtrees (e.g. `/home/user2` is not under `/home/user`) |
 
 **Why it matters:** This is the last line of defence against AI-hallucinated destructive commands. If this breaks, Nexus could execute `rm -rf /` without user confirmation.
 
@@ -623,7 +624,7 @@ pytest tests/test_executor.py -v
 #### `tests/test_session_manager.py` — 29 tests
 **What it checks:** Turn tracking, history trimming, context reference detection (pronouns, temporal markers), semantic relatedness filtering to prevent false-positive cache hits, and session summary generation.
 
-#### `tests/test_command_generator.py` — 15 tests
+#### `tests/test_command_generator.py` — 16 tests
 **What it checks:** LLM response cleanup (markdown fences, backticks, whitespace), SafetyCheck validation on generated commands, memory integration (RAG query + feedback storage), and **fallback / retry** behavior (429-style errors, empty responses, deduped clients).
 
 #### `tests/test_llm_client.py` — 11 tests
@@ -632,7 +633,7 @@ pytest tests/test_executor.py -v
 #### `tests/test_package_manager.py` — 22 tests
 **What it checks:** Package name validation (rejects shell injection via `;`, `|`, `` ` ``, `$()`), correct install/remove/update commands for APT/DNF/Pacman, and graceful handling of unknown package managers.
 
-#### `tests/test_orchestrator.py` — 18 tests
+#### `tests/test_orchestrator.py` — 19 tests
 **What it checks:** Missing binary extraction (4 regex patterns), self-healer (`_PKG_ALIAS` mapping, injection protection, LLM fallback, UNFIXABLE handling), plan view rendering, and `execute_plan` (empty plan, user cancellation, terminal step execution).
 
 ---
@@ -732,7 +733,7 @@ nexus/
 │   ├── utils/
 │   │   └── syntax_output.py     # Rich syntax highlighting for file reads
 │   └── main.py                  # CLI entry point (Typer)
-├── tests/                       # 176+ pytest tests
+├── tests/                       # 182+ pytest tests
 ├── docs/
 │   ├── FUTURE_SCOPE.md          # Roadmap + shipped features
 │   ├── architecture_overview.md # Architecture deep-dive with Mermaid diagrams
@@ -760,7 +761,7 @@ nexus/
 See [docs/FUTURE_SCOPE.md](docs/FUTURE_SCOPE.md) for the full roadmap.
 
 **Shipped:**
-Multi-brain AI architecture, Supermemory RAG, browser automation with key rotation, self-healing execution, exponential backoff (planner) + **command-generator retries/fallbacks**, SERVICE_MGT, **DIRECT_EXECUTE**, planner system-ops knowledge (AppImage, deb, rpm, desktop entries), persistent sessions, audit logging, secure sudo, shell injection hardening, **176-test** suite, CI with linting and security scanning.
+Multi-brain AI architecture, Supermemory RAG, browser automation with key rotation, self-healing execution, exponential backoff (planner) + **command-generator retries/fallbacks**, SERVICE_MGT, **DIRECT_EXECUTE**, planner system-ops knowledge (AppImage, deb, rpm, desktop entries), persistent sessions, audit logging, secure sudo, shell injection hardening, **182-test** suite, CI with linting and security scanning.
 
 **Up next:**
 Rollback checkpoints, dynamic slash command registry, **FILE_APPEND / FILE_PATCH**, LLM rate limiting & budgets, context window management, parallel step execution.
