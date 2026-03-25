@@ -59,11 +59,15 @@ class CommandExecutor:
         require_sudo: bool = False,
         cwd: Optional[str] = None,
         require_confirmation: Optional[bool] = None,
+        timeout: Optional[int] = None,
     ) -> Tuple[int, str, str]:
         """
         Executes a shell command safely.
         Returns: (return_code, stdout, stderr)
+
+        timeout: override subprocess wall-clock limit in seconds; None uses self.timeout.
         """
+        effective_timeout = self.timeout if timeout is None else timeout
         # 1. Safety validation
         try:
             SafetyCheck.check_command(command)
@@ -123,7 +127,7 @@ class CommandExecutor:
                 cwd=cwd,
                 shell=use_shell,
                 input=input_data,
-                timeout=self.timeout,
+                timeout=effective_timeout,
             )
 
             if result.returncode != 0 and (
@@ -147,7 +151,11 @@ class CommandExecutor:
 
         except subprocess.TimeoutExpired as e:
             self.audit.log(command, -1, user_confirmed, "", f"Timeout: {e}")
-            return -1, "", f"Command timed out after {self.timeout} seconds: {e}"
+            return (
+                -1,
+                "",
+                f"Command timed out after {effective_timeout} seconds: {e}",
+            )
         except Exception as e:
             self.audit.log(command, -1, user_confirmed, "", str(e))
             return -1, "", str(e)

@@ -440,7 +440,9 @@ class NexusApp:
         from ..core.system_detector import SystemDetector
 
         sys_info = SystemDetector().get_info()
-        gen = CommandGenerator(self.llm_client, sys_info)
+        gen = CommandGenerator(
+            self.llm_client, sys_info, fallback_clients=self.fallback_clients
+        )
         with self.console.status(
             f"[{ACCENT}]Generating command…[/{ACCENT}]", spinner="dots"
         ):
@@ -601,6 +603,68 @@ class NexusApp:
                     self.decision_engine.invalidate_cache()
             decision.action = "PLAN"
 
+        if decision.action == "DIRECT_EXECUTE":
+            if not self.llm_client or not self.executor:
+                decision.action = "PLAN"
+            else:
+                from ..ai.command_generator import CommandGenerator
+                from ..core.system_detector import SystemDetector
+
+                sys_info = SystemDetector().get_info()
+                gen = CommandGenerator(
+                    self.llm_client, sys_info, fallback_clients=self.fallback_clients
+                )
+                with self.console.status(
+                    f"[{ACCENT}]Generating command...[/{ACCENT}]", spinner="dots"
+                ):
+                    try:
+                        command = await asyncio.to_thread(gen.generate_command, text)
+                    except Exception as e:
+                        self.console.print(
+                            f"[{ERROR}]Command generation failed:[/{ERROR}] {e}"
+                        )
+                        decision.action = "PLAN"
+                        command = None
+
+                if decision.action == "DIRECT_EXECUTE" and command:
+                    from ..utils.syntax_output import print_inline_command
+
+                    self.console.print(f"[{DIM}]Generated:[/{DIM}]")
+                    print_inline_command(self.console, command)
+                    self.console.print()
+                    rc, out, err = await asyncio.to_thread(
+                        self.executor.run, command, False, None, None
+                    )
+                    if rc == 0 and out:
+                        from ..utils.syntax_output import print_command_output
+
+                        print_command_output(
+                            self.console, out.strip(), action="execute", success=True
+                        )
+                    elif rc == 0:
+                        self.console.print(
+                            f"[{SUCCESS}]Done.[/{SUCCESS}]"
+                        )
+                    elif err:
+                        from ..utils.syntax_output import print_error_output
+
+                        print_error_output(self.console, err, action="execute")
+                    else:
+                        self.console.print(
+                            f"[{ERROR}]Command failed (RC={rc}).[/{ERROR}]"
+                        )
+
+                    self.session_manager.add_turn(
+                        user_input=text,
+                        intent_action="DIRECT_EXECUTE",
+                        intent_reasoning=decision.reasoning,
+                        result=out if rc == 0 else (err or f"RC={rc}"),
+                        success=rc == 0,
+                    )
+                    self.last_action_result = out if rc == 0 else err
+                    self.last_action_type = "DIRECT_EXECUTE"
+                    return
+
         if decision.action == "PLAN":
             if not self.orchestrator:
                 from ..core.orchestrator import Orchestrator
@@ -716,6 +780,11 @@ class NexusApp:
                 plan_data = json.loads(clean_json)
                 steps = []
                 for i, s_data in enumerate(plan_data, 1):
+                    import os as _os
+
+                    step_cwd = s_data.get("cwd")
+                    if step_cwd:
+                        step_cwd = _os.path.expanduser(str(step_cwd))
                     steps.append(
                         TaskStep(
                             id=i,
@@ -725,6 +794,7 @@ class NexusApp:
                             filename_pattern=s_data.get("filename_pattern"),
                             file_content=s_data.get("file_content"),
                             use_cloud=s_data.get("headless", False),
+                            cwd=step_cwd,
                         )
                     )
 
