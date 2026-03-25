@@ -6,16 +6,16 @@
 
 - **Multi-Brain AI Architecture** - Specialized models for different tasks
 - **Autonomous Web Browsing** - Automated tasks with browser-use
-- **Persistent Memory** - RAG-based context retention with Supermemory
+- **Persistent Memory** - RAG via Supermemory (**bring your own API key**; snippets stay in your account — see [Onboarding & Supermemory](#onboarding--supermemory-byok))
 - **Self-Healing Execution** - Auto-fix failed commands and auto-failover LLM routing
 - **Resilient Command Generation** - Retries transient API errors (429, timeouts) per provider, then falls back to alternate models; empty replies do not block the chain
 - **Intelligent Intent Recognition** - Context-aware decision making (including **DIRECT_EXECUTE** for simple one-shot shell tasks)
-- **Security First** - AST-based defensive command validation, strict `rm -rf /` detection (without false positives on `/tmp/...` or wrapped lines), and user confirmation
+- **Security First** - AST + regex gate before execution: strict `rm -rf /` heuristics, **path allowlists** for `read` / `FILE_READ` / home-scoped `FILE_WRITE` (subtree checks, not string prefixes), **FTP credential / anonymous-FTP** patterns blocked in strict mode, mandatory confirmation for risky/sudo commands
 - **Ephemeral Azure Sandboxing** - User-controlled cloud sandbox for running untrusted or risky commands safely
 
 ### Maturity snapshot (March 2026)
 
-Nexus is best described as **production-leaning for a power-user TUI**: the execution stack (planner, executor, security gate, audit log, self-heal loop, LLM fallbacks) is **well tested** (**182** automated `pytest` cases) and hardened from real failure modes (rate limits, bad JSON plans, sudo/interactive edge cases). Remaining risk is mostly **product** surface area: no automatic rollback checkpoints yet, `FILE_WRITE` always **replaces** whole files (no first-class append/patch action), and plans are still sequential. For **AppImage + desktop integration**, the planner encodes a full procedure (extract, icon, `FILE_WRITE` `.desktop`, `update-desktop-database`, Electron `--no-sandbox`); extraction of large images can take many minutes and is supported with an extended subprocess timeout.
+Nexus is best described as **production-leaning for a power-user TUI**: the execution stack (planner, executor, security gate, audit log, self-heal loop, LLM fallbacks) is **well tested** (**192** automated `pytest` cases) and hardened from real failure modes (rate limits, bad JSON plans, sudo/interactive edge cases). **Distribution** ships without embedded API keys; users supply keys via onboarding or environment. Remaining risk is mostly **product** surface area: no automatic rollback checkpoints yet, `FILE_WRITE` always **replaces** whole files (no first-class append/patch action), and plans are still sequential. For **AppImage + desktop integration**, the planner encodes a full procedure (extract, icon, `FILE_WRITE` `.desktop`, `update-desktop-database`, Electron `--no-sandbox`); extraction of large images can take many minutes and is supported with an extended subprocess timeout.
 
 ## Architecture Overview
 
@@ -53,7 +53,7 @@ graph TB
     end
 
     subgraph "Core Services"
-        Config[Config Manager<br/>~/.config/jarvis]
+        Config[Config Manager<br/>~/.config/nexus]
         System[System Detector<br/>OS + Package Manager]
         Security[Security Module<br/>Command Validation]
     end
@@ -284,12 +284,14 @@ sequenceDiagram
     Nexus->>Azure: Create Ubuntu 22.04 container
     Azure-->>Nexus: Container provisioned
     Nexus->>Azure: apt-get install git curl wget build-essential python3 nodejs cmake...
-    Nexus->>Azure: Run user command inside container
+    Nexus->>Azure: Run user command (base64 piped to bash, no nested eval quote bug)
     Azure-->>Nexus: Stream stdout/stderr logs in real time
     Nexus-->>User: Display output
     Nexus->>Azure: Delete container (permanent)
     Note over Azure: Container nuked. Your laptop untouched.
 ```
+
+**Implementation:** **Every** sandboxed command (not only `git` — also `curl`, `wget`, `bash -c`, pipes, `&&` chains, etc.) is **UTF-8 base64-encoded** inside the container `command-line` and piped through `base64 -d | bash`, so the full script runs verbatim. That avoids an older bug where `eval` + `shlex.quote(cmd)` sat inside a single-quoted `bash -c '…'` string — inner quotes **terminated** the outer literal early and could reduce a long command to the **first token** only (e.g. bare `git`). Obviously incomplete one-liners (empty, bare `curl`, `bash -c` with no script, …) are refused before a container is created.
 
 **Design principle:** Nexus does not decide if something is "sketchy" for you. It acts as a firewall checkpoint — you stay in control.
 
@@ -363,7 +365,7 @@ graph TB
 
 #### `command_generator.py` - Natural Language → Shell Commands
 - Converts user requests to executable shell commands
-- Uses RAG to retrieve proven solutions from memory
+- Uses RAG to retrieve proven solutions from memory (queries use the **primary** client’s memory; successful generations are **recorded on whichever LLM client actually produced** the command, including fallbacks)
 - **Retries** transient provider failures on the same model (with backoff), then tries **fallback** clients; treats empty model output as retryable
 - Implements safety guidelines and idempotency principles (`SafetyCheck` before return)
 
@@ -373,7 +375,8 @@ graph TB
 - Routes to: COMMAND, CHAT, PLAN, SEARCH, BROWSE
 
 #### `memory_client.py` - Supermemory Integration
-- Stores: System context, command feedback, successful plans, user preferences
+- **BYOK**: Each user sets `SUPERMEMORY_API_KEY` (env) or saves a key during onboarding — memories are stored in **that user’s** Supermemory project, not a shared vendor key inside the package.
+- Stores (plain text to the API): system context snippets, command feedback, task logs, planner-related context — see [Onboarding & Supermemory](#onboarding--supermemory-byok).
 - Retrieves: Relevant context for RAG-enhanced prompts
 - Enables learning from past successes/failures
 
@@ -382,14 +385,17 @@ graph TB
 #### `orchestrator.py` - Multi-Step Task Execution
 - **Planner**: Breaks complex requests into steps (CHECK → BROWSER → TERMINAL → FILE_WRITE / FILE_READ / FILE_SEARCH / …)
 - **Smart Resume**: Checks if files already exist before downloading
-- **Self-Healing**: Auto-fixes failed commands using LLM reflection (plus fast local heuristics for common install/path errors)
-- **FILE_WRITE**: Writes **full file contents** (overwrite). Paths under your **home directory** use Python `write_text` (no sudo); **system paths** use `sudo mkdir -p` + `sudo tee`. Failed writes retry once with mkdir / sudo (see self-heal block). There is **no** `FILE_APPEND` yet — to append (e.g. a line in `~/.zshrc`), the planner typically uses a **TERMINAL** step (`echo '…' >> ~/.zshrc`) which is subject to normal shell safety checks and confirmation.
+- **Self-Healing**: Auto-fixes failed commands using LLM reflection plus fast local heuristics (e.g. wrong package manager for `.deb`/`.AppImage`, **`mkdir -p`** when stderr shows missing paths — uses `pathlib` + `shlex.quote`, not fragile string splits)
+- **FILE_WRITE**: Writes **full file contents** (overwrite). Paths under your **home directory** use Python `write_text` (no sudo); **system paths** use `sudo mkdir -p` + `sudo tee`. Userland vs sudo paths share **`_file_write_via_userland` / `_file_write_via_sudo_tee`** so the main executor and the self-heal retry stay consistent. Failed writes retry once with mkdir / sudo (see self-heal block). There is **no** `FILE_APPEND` yet — to append (e.g. a line in `~/.zshrc`), the planner typically uses a **TERMINAL** step (`echo '…' >> ~/.zshrc`) which is subject to normal shell safety checks and confirmation.
 - **AppImage / desktop flow (planner-guided)**: chmod + copy to `~/.local/bin`, **`--appimage-extract`** inside **`mktemp -d /tmp/nexus-appimg.XXXXXX`** (avoids `squashfs-root` collisions across concurrent plans), copy icon, **`FILE_WRITE`** a fresh `~/.local/share/applications/*.desktop` (not the squashfs copy — wrong `Exec`/`Icon`), **`update-desktop-database`**, and for Electron/Chromium bundles **`--no-sandbox`** on `Exec=`. Residual gap: icons remain best effort from a shallow `find`.
 - **Live UI**: Real-time progress tracking with Rich tables
 
 #### `executor.py` & `security.py` — Safe Command Execution
 - **AST-Based Command Validation**: Deep analysis of shell syntax to catch obfuscated attacks (e.g. `eval`, `cd / && rm -rf *`).
 - Strict blacklist filtering (blocks `rm -rf /`, `mkfs`, fork bombs `:(){ :|:& };:`).
+- **`rm -rf /` heuristics** use horizontal-whitespace-aware patterns so `/tmp/…`, `/var/tmp/…`, and wrapped lines are not false positives.
+- **Path allowlist** (`SafetyCheck.is_path_within_any_root`): CLI `read`, orchestrator `FILE_READ`, and home-scoped `FILE_WRITE` require resolved paths to lie under **home** and/or **cwd** using `Path.relative_to`, avoiding `/home/user2/…` false “under `/home/user`” bugs from naive `str.startswith`.
+- **FTP (strict mode)**: Commands embedding passwords in `ftp://user:pass@…`, `wget --ftp-password=…`, `lftp -u user,pass`, or common **anonymous** FTP forms are rejected (same strict path as other dangerous-pattern warnings). Normal `docker`, `psql`, `postgresql://…` URLs are unaffected.
 - User confirmation mandatory for dangerous or `sudo` operations.
 - **Scoped `shell=True`**: Only activates when genuine pipeline operators (`&&`, `|`, `;`, `>`) are detected — prevents injection when the command is a simple binary call.
 - **Zeroized sudo password**: Stored as `bytearray` in memory and byte-by-byte zeroed on auth failure — never held as a Python `str` that GC might retain.
@@ -397,7 +403,7 @@ graph TB
 - Dry-run mode support.
 
 #### `config_manager.py` - Configuration Management
-- Stores API keys, preferences in `~/.config/jarvis/config.json`
+- Stores API keys, preferences in `~/.config/nexus/config.json` (file mode `0o600` on save)
 - Environment variable overrides
 - Onboarding state tracking
 
@@ -428,9 +434,16 @@ graph TB
 - **Command Handlers**: `/browse`, `/search`, etc.
 
 #### `onboarding.py` - First-Run Setup
-- Collects API keys (Google, OpenRouter, Groq)
-- Configures Supermemory integration
-- Saves to config file
+- Collects API keys (Google, OpenRouter, Groq, optional Anthropic)
+- Saves to `~/.config/nexus/config.json` (no keys are bundled with the app)
+
+### Onboarding & Supermemory (BYOK)
+
+First-run setup explains that **Nexus Memory** is optional and uses **your** Supermemory project:
+
+- If **`SUPERMEMORY_API_KEY`** is already set (or a key exists in saved config), onboarding reports it and asks whether to **enable** RAG (default: on).
+- If not set, memory defaults **off**; users can opt in and **paste their own key** (stored locally next to other keys).
+- **Shipping**: Release artifacts should **not** embed a shared Supermemory or LLM key — users supply fuel (keys) after install.
 
 ## Installation
 
@@ -472,11 +485,12 @@ graph TB
    playwright install chromium
 ```
 
-5. **Configure API keys**:
+5. **Configure API keys** (all BYOK — nothing is embedded in the package):
 ```bash
    cp .env.example .env
    # Edit .env and add your API keys
 ```
+   Or rely on **`SUPERMEMORY_API_KEY`**, **`OPENROUTER_API_KEY`**, etc. in the environment.
 
 6. **Run onboarding** (first-time only):
 ```bash
@@ -530,7 +544,7 @@ nexus search "best restaurants in Dubai"
 
 ## Testing
 
-Nexus ships with **182 automated pytest tests** across 10+ test files, covering every critical code path. Run them anytime:
+Nexus ships with **192 automated pytest tests** across 10+ test files, covering every critical code path. Run them anytime:
 
 ```bash
 # Install dev dependencies (first time only)
@@ -548,7 +562,7 @@ pytest tests/test_executor.py -v
 
 ### Test Coverage Map
 
-#### `tests/test_security.py` — 27 tests
+#### `tests/test_security.py` — 32 tests
 **What it checks:** The `CommandValidator` and `SafetyCheck` layer that sits before every command execution.
 
 | Test Group | Checks |
@@ -560,6 +574,7 @@ pytest tests/test_executor.py -v
 | `TestSudoDetection` | `apt`, `systemctl`, writing to `/etc/` are correctly flagged as requiring sudo; `chmod` on user paths is not forced interactive |
 | `TestRmRfHeuristics` | `rm -rf /tmp/...` and similar are **not** misread as `rm -rf /`; newline after `/` does not false-positive |
 | `TestPathWithinRoots` | File read/write allowlists use proper path subtrees (e.g. `/home/user2` is not under `/home/user`) |
+| `TestFtpSecurity` | FTP passwords in URLs, `wget --ftp-password`, `lftp -u user,pass`, and anonymous FTP are rejected in strict mode |
 
 **Why it matters:** This is the last line of defence against AI-hallucinated destructive commands. If this breaks, Nexus could execute `rm -rf /` without user confirmation.
 
@@ -633,8 +648,8 @@ pytest tests/test_executor.py -v
 #### `tests/test_package_manager.py` — 22 tests
 **What it checks:** Package name validation (rejects shell injection via `;`, `|`, `` ` ``, `$()`), correct install/remove/update commands for APT/DNF/Pacman, and graceful handling of unknown package managers.
 
-#### `tests/test_orchestrator.py` — 19 tests
-**What it checks:** Missing binary extraction (4 regex patterns), self-healer (`_PKG_ALIAS` mapping, injection protection, LLM fallback, UNFIXABLE handling), plan view rendering, and `execute_plan` (empty plan, user cancellation, terminal step execution).
+#### `tests/test_orchestrator.py` — 24 tests
+**What it checks:** Missing binary extraction (4 regex patterns), self-healer (`_PKG_ALIAS` mapping, injection protection, LLM fallback, UNFIXABLE handling), plan view rendering, `execute_plan` (empty plan, user cancellation, terminal step execution), **Azure `AZURE_RUN`** (`_azure_bootstrap_command_line` base64 round-trip for **any** shell line; `_azure_run_preflight` rejects empty/bare `git`/`curl`/… stubs).
 
 ---
 
@@ -684,6 +699,8 @@ Nexus is built to gracefully handle failures at both the software and API level:
 | **Unseen command execution** | Agent runs commands user never approved | Mandatory user confirmation gate on every execution; every decision logged to `~/.nexus/audit.log` |
 | **Audit evasion** | Attacker covers tracks by deleting session data | Audit log is separate from session (`audit.log` vs `session.json`), `chmod 600`, append-only via Python logging |
 | **API key leakage** | Keys logged in debug output or stack traces | No debug prints in production paths; keys read from env/config, never echoed |
+| **Path escape on file read/write** | LLM points `FILE_READ` or CLI `read` at another user’s home via prefix tricks | `Path.resolve()` + `relative_to` allowlist (home + cwd), not `str.startswith` on `/home/user` |
+| **FTP secrets on CLI** | Model suggests `ftp://user:pass@…` or `wget --ftp-password=` | Regex warnings in `CommandValidator`; **strict** validation blocks before execution |
 | **Indefinite hangs** | Malformed command hangs the subprocess forever | Configurable timeout (default 120s) on all `subprocess.run` calls |
 | **Cascading API failures** | All LLM fallbacks slammed simultaneously on rate-limit | Exponential backoff with jitter between fallback attempts |
 
@@ -733,7 +750,7 @@ nexus/
 │   ├── utils/
 │   │   └── syntax_output.py     # Rich syntax highlighting for file reads
 │   └── main.py                  # CLI entry point (Typer)
-├── tests/                       # 182+ pytest tests
+├── tests/                       # 192+ pytest tests
 ├── docs/
 │   ├── FUTURE_SCOPE.md          # Roadmap + shipped features
 │   ├── architecture_overview.md # Architecture deep-dive with Mermaid diagrams
@@ -753,7 +770,7 @@ nexus/
 | `GOOGLE_API_KEY` | Gemini models, search | For search feature |
 | `OPENROUTER_API_KEY` | GPT models via OpenRouter | For best chat quality |
 | `GROQ_API_KEY` | Fast routing decisions | Optional (fallback to others) |
-| `SUPERMEMORY_API_KEY` | Memory/RAG system | Optional |
+| `SUPERMEMORY_API_KEY` | Memory/RAG (**your** Supermemory project; BYOK) | Optional |
 | `BROWSER_USE_API_KEY` | Cloud browser automation | Optional |
 
 ## Roadmap
@@ -761,7 +778,7 @@ nexus/
 See [docs/FUTURE_SCOPE.md](docs/FUTURE_SCOPE.md) for the full roadmap.
 
 **Shipped:**
-Multi-brain AI architecture, Supermemory RAG, browser automation with key rotation, self-healing execution, exponential backoff (planner) + **command-generator retries/fallbacks**, SERVICE_MGT, **DIRECT_EXECUTE**, planner system-ops knowledge (AppImage, deb, rpm, desktop entries), persistent sessions, audit logging, secure sudo, shell injection hardening, **182-test** suite, CI with linting and security scanning.
+Multi-brain AI architecture, Supermemory RAG (**BYOK** onboarding + env), browser automation with key rotation, self-healing execution (improved missing-path heuristics, shared `FILE_WRITE` helpers), exponential backoff (planner) + **command-generator retries/fallbacks** (memory recorded on the **succeeding** LLM client), SERVICE_MGT, **DIRECT_EXECUTE**, planner system-ops knowledge (AppImage w/ `mktemp` extract, deb, rpm, desktop entries), path allowlists for read/write, **FTP strict checks**, persistent sessions, audit logging, secure sudo, shell injection hardening, **192-test** suite, CI with linting and security scanning.
 
 **Up next:**
 Rollback checkpoints, dynamic slash command registry, **FILE_APPEND / FILE_PATCH**, LLM rate limiting & budgets, context window management, parallel step execution.

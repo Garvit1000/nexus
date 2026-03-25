@@ -1,3 +1,4 @@
+import base64
 import glob
 import json
 import asyncio
@@ -121,7 +122,7 @@ ACTIONS:
   - Name/directory: command="sites" or command="advran/sites" or command=".bashrc"
   - Content grep: command="content:password_hash"
   - NEVER use TERMINAL with find/locate — always use FILE_SEARCH instead.
-- AZURE_RUN: run untrusted/heavy scripts in disposable cloud sandbox.
+- AZURE_RUN: run untrusted/heavy scripts in disposable cloud sandbox (user command is passed safely; still use a complete shell command string).
 - SERVICE_MGT: manage system services.
 
 SYSTEM OPERATIONS REFERENCE (use these exact procedures):
@@ -169,6 +170,7 @@ RULES:
 5. For any file/folder search: FILE_SEARCH, not TERMINAL with find/locate.
 6. For local file installs (.deb, .AppImage, .rpm): use correct tool (dpkg, chmod+cp, rpm). NEVER apt-get install a filename.
 7. Cleanup after extract: use ONE quoted path, e.g. rm -rf "/tmp/nexus-recordly-extract" — NEVER "rm -rf / something" (space after / deletes root and is blocked by the safety filter).
+8. **Sandbox / sketchy one-liners** (TERMINAL → user may choose Azure): commands MUST be complete executable lines — e.g. full `git clone <URL>`, `curl -fsSL <URL>`, `wget <URL>`, `bash -c '…'`, `tar xf …` — NEVER bare `git`, `curl`, `wget`, `bash`, `sh -c` with no payload, or split URLs across steps. Any full shell line is transported intact into the cloud sandbox.
 
 EXAMPLES:
 "Setup Nginx on port 8080" →
@@ -265,6 +267,71 @@ class Orchestrator:
         self.llm_client = llm_client
         self.fallback_clients = fallback_clients or []
         self.planner = Planner(llm_client, fallback_clients=fallback_clients)
+
+    @staticmethod
+    def _azure_run_preflight(shell_command: str) -> Optional[str]:
+        """
+        Reject obviously incomplete one-liners before provisioning a sandbox (non-interactive).
+
+        The bootstrap always UTF-8 base64-encodes the **entire** user command for transport
+        (git, curl, wget, `bash -c`, pipes, compound commands, etc.). This only catches
+        empty lines and trivial help/subcommand stubs that would no-op or print usage.
+        """
+        t = shell_command.strip()
+        if not t:
+            return (
+                "AZURE_RUN refused: empty command. Provide a full non-interactive shell "
+                "one-liner (any tool: git, curl, wget, bash -c, tar, make, etc.)."
+            )
+        stubs: List[tuple[str, str]] = [
+            (
+                r"git(\s+(--?help|-h))?\s*",
+                "git … (e.g. `git clone <URL>`)",
+            ),
+            (r"git\s+clone\s*", "git clone <URL> …"),
+            (
+                r"curl(\s+(-h|--help|\?))?\s*",
+                "curl … (e.g. `curl -fsSL <URL>`)",
+            ),
+            (
+                r"wget(\s+(-h|--help))?\s*",
+                "wget … (e.g. `wget -O- <URL>`)",
+            ),
+            (r"bash\s*", "bash … (e.g. `bash -c '…'` or a script path)"),
+            (r"sh\s*", "sh …"),
+            (r"bash\s+-c\s*", "bash -c '<script>'"),
+            (r"sh\s+-c\s*", "sh -c '<script>'"),
+            (r"tar\s*", "tar … (e.g. `tar xf …`)"),
+        ]
+        for pat, hint in stubs:
+            if re.fullmatch(pat, t, flags=re.IGNORECASE):
+                return (
+                    f"AZURE_RUN refused: command looks incomplete ({hint}). "
+                    "The full line is base64-run inside the container as-is."
+                )
+        return None
+
+    @staticmethod
+    def _azure_bootstrap_command_line(user_shell_command: str) -> str:
+        """
+        Build the `bash -c '...'` string for Azure Container Instances bootstrap.
+
+        **Every** user command (any shell text: pipes, quotes inside the payload, long URLs)
+        is UTF-8 base64-encoded and piped to `bash` in the container — not `eval` +
+        `shlex.quote`, which broke nested single quotes inside `bash -c '…'` and could
+        truncate the script to the first token.
+        """
+        b64 = base64.standard_b64encode(user_shell_command.encode("utf-8")).decode(
+            "ascii"
+        )
+        # base64 alphabet never contains "'" — safe inside outer single-quoted bash string
+        return (
+            "/bin/bash -c '"
+            "apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y "
+            "git curl wget build-essential python3-pip python3-venv nodejs npm cmake && "
+            'echo "===NEXUS_OUTPUT_START===" && '
+            f"printf '%s' '{b64}' | base64 -d | bash'"
+        )
 
     # Map binary names → apt package names (binary ≠ package name in some cases)
     _PKG_ALIAS: Dict[str, str] = {
@@ -1080,116 +1147,124 @@ If it cannot be fixed, return: UNFIXABLE
                         import subprocess
 
                         container_name = f"nexus-sandbox-{secrets.token_hex(4)}"
-                        safe_cmd = shlex.quote(step.command)
+                        _acmd = step.command.strip()
+                        _pf = self._azure_run_preflight(_acmd)
+                        if _pf:
+                            step.output = _pf
+                            step.status = "failed"
+                        else:
+                            azure_cmd_line = self._azure_bootstrap_command_line(_acmd)
 
-                        live.stop()
-                        try:
-                            # 1. Provision Sandbox
-                            with self.console.status(
-                                f"[bold cyan]Provisioning Azure Sandbox ({container_name})…[/bold cyan]",
-                                spinner="dots",
-                            ):
-                                # Use Microsoft's local mirror for Ubuntu to avoid Hub rate limits/registry errors
-                                image_name = "mcr.microsoft.com/mirror/docker/library/ubuntu:22.04"
+                            live.stop()
+                            try:
+                                # 1. Provision Sandbox
+                                with self.console.status(
+                                    f"[bold cyan]Provisioning Azure Sandbox ({container_name})…[/bold cyan]",
+                                    spinner="dots",
+                                ):
+                                    # Use Microsoft's local mirror for Ubuntu to avoid Hub rate limits/registry errors
+                                    image_name = "mcr.microsoft.com/mirror/docker/library/ubuntu:22.04"
 
-                                create_cmd = [
-                                    "az",
-                                    "container",
-                                    "create",
-                                    "--resource-group",
-                                    "NexusSandboxRG",
-                                    "--name",
-                                    container_name,
-                                    "--image",
-                                    image_name,
-                                    "--os-type",
-                                    "Linux",
-                                    "--cpu",
-                                    "1",
-                                    "--memory",
-                                    "1.5",
-                                    "--restart-policy",
-                                    "Never",
-                                    "--command-line",
-                                    f"/bin/bash -c 'apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3-pip python3-venv nodejs npm cmake && echo \"===NEXUS_OUTPUT_START===\" && eval {safe_cmd}'",
-                                ]
+                                    create_cmd = [
+                                        "az",
+                                        "container",
+                                        "create",
+                                        "--resource-group",
+                                        "NexusSandboxRG",
+                                        "--name",
+                                        container_name,
+                                        "--image",
+                                        image_name,
+                                        "--os-type",
+                                        "Linux",
+                                        "--cpu",
+                                        "1",
+                                        "--memory",
+                                        "1.5",
+                                        "--restart-policy",
+                                        "Never",
+                                        "--command-line",
+                                        azure_cmd_line,
+                                    ]
 
-                                for attempt in range(2):
-                                    process = await asyncio.to_thread(
+                                    for attempt in range(2):
+                                        process = await asyncio.to_thread(
+                                            subprocess.run,
+                                            create_cmd,
+                                            capture_output=True,
+                                            text=True,
+                                            shell=False,
+                                        )
+                                        if process.returncode == 0:
+                                            break
+                                        elif attempt == 0:
+                                            await asyncio.sleep(2)
+
+                                return_code, stdout, stderr = (
+                                    process.returncode,
+                                    process.stdout,
+                                    process.stderr,
+                                )
+
+                                if return_code == 0:
+                                    self.console.print(
+                                        "[dim]Fetching sandbox results…[/dim]"
+                                    )
+                                    logs_cmd = [
+                                        "az",
+                                        "container",
+                                        "logs",
+                                        "--resource-group",
+                                        "NexusSandboxRG",
+                                        "--name",
+                                        container_name,
+                                        "--follow",
+                                    ]
+                                    logs_process = await asyncio.to_thread(
                                         subprocess.run,
-                                        create_cmd,
+                                        logs_cmd,
                                         capture_output=True,
                                         text=True,
                                         shell=False,
                                     )
-                                    if process.returncode == 0:
-                                        break
-                                    elif attempt == 0:
-                                        await asyncio.sleep(2)
-
-                            return_code, stdout, stderr = (
-                                process.returncode,
-                                process.stdout,
-                                process.stderr,
-                            )
-
-                            if return_code == 0:
+                                    rc, logs_out = (
+                                        logs_process.returncode,
+                                        logs_process.stdout,
+                                    )
+                                    _MARKER = "===NEXUS_OUTPUT_START==="
+                                    if _MARKER in (logs_out or ""):
+                                        logs_out = logs_out.split(_MARKER, 1)[1]
+                                    step.output = (
+                                        logs_out.strip()
+                                        if logs_out and logs_out.strip()
+                                        else "Process exited silently."
+                                    )
+                                    step.status = "success" if rc == 0 else "failed"
+                                else:
+                                    step.output = f"Azure Sandbox Provisioning Error (RC={return_code}): {stderr if stderr else stdout}"
+                                    step.status = "failed"
+                            finally:
+                                # 3. Always clean up
                                 self.console.print(
-                                    "[dim]Fetching sandbox results…[/dim]"
+                                    "[dim]Destroying Azure Sandbox...[/dim]"
                                 )
-                                logs_cmd = [
+                                delete_cmd = [
                                     "az",
                                     "container",
-                                    "logs",
+                                    "delete",
                                     "--resource-group",
                                     "NexusSandboxRG",
                                     "--name",
                                     container_name,
-                                    "--follow",
+                                    "--yes",
                                 ]
-                                logs_process = await asyncio.to_thread(
+                                await asyncio.to_thread(
                                     subprocess.run,
-                                    logs_cmd,
+                                    delete_cmd,
                                     capture_output=True,
-                                    text=True,
                                     shell=False,
                                 )
-                                rc, logs_out = (
-                                    logs_process.returncode,
-                                    logs_process.stdout,
-                                )
-                                _MARKER = "===NEXUS_OUTPUT_START==="
-                                if _MARKER in (logs_out or ""):
-                                    logs_out = logs_out.split(_MARKER, 1)[1]
-                                step.output = (
-                                    logs_out.strip()
-                                    if logs_out and logs_out.strip()
-                                    else "Process exited silently."
-                                )
-                                step.status = "success" if rc == 0 else "failed"
-                            else:
-                                step.output = f"Azure Sandbox Provisioning Error (RC={return_code}): {stderr if stderr else stdout}"
-                                step.status = "failed"
-                        finally:
-                            # 3. Always clean up
-                            self.console.print("[dim]Destroying Azure Sandbox...[/dim]")
-                            delete_cmd = [
-                                "az",
-                                "container",
-                                "delete",
-                                "--resource-group",
-                                "NexusSandboxRG",
-                                "--name",
-                                container_name,
-                                "--yes",
-                            ]
-                            await asyncio.to_thread(
-                                subprocess.run,
-                                delete_cmd,
-                                capture_output=True,
-                                shell=False,
-                            )
-                            live.start()
+                                live.start()
 
                     elif step.action == "SERVICE_MGT":
                         # SERVICE_MGT: Run systemctl/service command then auto-verify
@@ -1317,13 +1392,21 @@ If it cannot be fixed, return: UNFIXABLE
                                     accumulated_context += f"\n[Attempt {heal_attempt}] Fixed cmd: {fixed_command!r} also failed: {err}"
                                     step.output = err
                             elif step.action == "AZURE_RUN":
+                                _fc = fixed_command.strip()
+                                _pf = self._azure_run_preflight(_fc)
+                                if _pf:
+                                    step.output = _pf
+                                    accumulated_context += (
+                                        f"\n[Attempt {heal_attempt}] {_pf}"
+                                    )
+                                    continue
                                 import secrets
                                 import subprocess
 
                                 container_name = (
                                     f"nexus-sandbox-heal-{secrets.token_hex(4)}"
                                 )
-                                safe_cmd = shlex.quote(fixed_command)
+                                azure_cmd_line = self._azure_bootstrap_command_line(_fc)
 
                                 create_cmd = [
                                     "az",
@@ -1344,7 +1427,7 @@ If it cannot be fixed, return: UNFIXABLE
                                     "--restart-policy",
                                     "Never",
                                     "--command-line",
-                                    f"/bin/bash -c 'apt-get update -y && DEBIAN_FRONTEND=noninteractive apt-get install -y git curl wget build-essential python3-pip python3-venv nodejs npm cmake && echo \"===NEXUS_OUTPUT_START===\" && eval {safe_cmd}'",
+                                    azure_cmd_line,
                                 ]
                                 process = await asyncio.to_thread(
                                     subprocess.run,

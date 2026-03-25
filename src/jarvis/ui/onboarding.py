@@ -4,6 +4,7 @@ from rich.prompt import Prompt, Confirm
 from rich.markdown import Markdown
 from rich.align import Align
 from time import sleep
+from typing import Optional
 
 from ..core.config_manager import ConfigManager
 
@@ -65,31 +66,54 @@ class OnboardingUI:
             "Enter Anthropic API Key (Press Enter to skip)", password=True
         )
 
-        # 2. Memory Setup
-        # Supermemory is provided by the system ("Ours"), so we don't ask the user for the key.
-        # We just confirm if they want to use the intelligent features.
-        self.console.print("\n[bold blue]Step 2: Intelligence & Memory[/bold blue]")
+        # 2. Memory (optional — bring your own Supermemory key)
+        self.console.print(
+            "\n[bold blue]Step 2: Optional memory (Supermemory)[/bold blue]"
+        )
+        self.console.print(
+            "[dim]Nexus Memory (RAG) stores short snippets of your requests, generated "
+            "commands, and command output in [bold]your[/bold] Supermemory project — "
+            "not a shared server key. Each user should use their own API key. "
+            "Create one at [link=https://supermemory.ai]supermemory.ai[/link].[/dim]\n"
+        )
 
-        # Check if we have the system key (loaded from env by ConfigManager)
-        has_system_memory = self.config_mgr.config.supermemory_api_key is not None
-
+        # ConfigManager merges SUPERMEMORY_API_KEY from the environment on load.
+        existing_sm_key: Optional[str] = self.config_mgr.config.supermemory_api_key
         use_memory = False
-        if has_system_memory:
-            self.console.print("[green]✓ System Memory Key Detected[/green]")
+        supermemory_key_to_save: Optional[str] = None
+
+        if existing_sm_key:
+            self.console.print(
+                "[green]✓ Supermemory API key found[/green] "
+                "[dim]([cyan]SUPERMEMORY_API_KEY[/cyan] or saved config)[/dim]"
+            )
             use_memory = Confirm.ask(
-                "Enable [bold]Nexus Memory[/bold] (Context Intelligence)?", default=True
+                "Enable [bold]Nexus Memory[/bold] (RAG) using this key?",
+                default=True,
             )
         else:
-            self.console.print(
-                "[dim]System Memory Key not found in environment. Memory features disabled.[/dim]"
+            use_memory = Confirm.ask(
+                "Enable [bold]Nexus Memory[/bold]? You will enter your Supermemory API key.",
+                default=False,
             )
-            use_memory = False
+            if use_memory:
+                sm_key = Prompt.ask(
+                    "Supermemory API key [dim](stored locally in ~/.config/nexus/)[/dim]",
+                    password=True,
+                )
+                if not sm_key.strip():
+                    self.console.print(
+                        "[yellow]No key entered — memory will stay disabled.[/yellow]"
+                    )
+                    use_memory = False
+                else:
+                    supermemory_key_to_save = sm_key.strip()
 
         # 3. Save Configuration
         self.console.print(
             "\n[bold green]Setup Complete![/bold green] Saving configuration..."
         )
-        self.config_mgr.update(
+        save_kwargs = dict(
             onboarding_completed=True,
             google_api_key=google_key,
             openrouter_api_key=openrouter_key,
@@ -98,6 +122,9 @@ class OnboardingUI:
             use_supermemory=use_memory,
             model_provider="openrouter",
         )
+        if supermemory_key_to_save is not None:
+            save_kwargs["supermemory_api_key"] = supermemory_key_to_save
+        self.config_mgr.update(**save_kwargs)
         sleep(1)
         self.console.print(
             "[bold green]Configuration saved![/bold green] Initializing Nexus...\n"
@@ -123,7 +150,7 @@ class OnboardingUI:
 Nexus integrates deeply with your system to automate tasks, manage packages, and answer complex queries with context-aware intelligence.
 
 *   **Smart Automation**: Generate and execute commands safely.
-*   **Memory Core**: Remembers your preferences and past tasks.
+*   **Memory Core** (optional): Your Supermemory key — RAG in your account only.
 *   **Web Integration**: Search and interact with the web.
         """
         self.console.print(Align.center(ascii_art))

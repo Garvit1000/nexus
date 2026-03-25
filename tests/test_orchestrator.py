@@ -12,6 +12,8 @@ Verifies that:
 """
 
 import asyncio
+import base64
+import re
 from unittest.mock import MagicMock, patch
 from rich.console import Console
 from jarvis.core.orchestrator import Orchestrator, TaskStep
@@ -33,6 +35,44 @@ def _mock_orchestrator(llm_response="UNFIXABLE"):
         fallback_clients=[],
     )
     return orch
+
+
+class TestAzureRunPreflight:
+    def test_empty_refused(self):
+        assert Orchestrator._azure_run_preflight("  ") is not None
+
+    def test_bare_tools_refused(self):
+        assert Orchestrator._azure_run_preflight("git") is not None
+        assert Orchestrator._azure_run_preflight("curl") is not None
+        assert Orchestrator._azure_run_preflight("wget --help") is not None
+        assert Orchestrator._azure_run_preflight("bash -c ") is not None
+
+    def test_full_commands_allowed(self):
+        assert Orchestrator._azure_run_preflight("git clone https://x/y.git") is None
+        assert (
+            Orchestrator._azure_run_preflight(
+                "curl -fsSL https://x | tar xz && make -C foo"
+            )
+            is None
+        )
+        assert Orchestrator._azure_run_preflight("bash -c 'echo hi'") is None
+
+
+class TestAzureBootstrapCommandLine:
+    """Azure ACI: user command must not be shlex-quoted inside single-quoted bash -c."""
+
+    def test_bootstrap_embeds_roundtrippable_payload(self):
+        cmd = "git clone https://dev.azure.com/org/proj/_git/repo --depth 1"
+        line = Orchestrator._azure_bootstrap_command_line(cmd)
+        m = re.search(r"printf '%s' '([A-Za-z0-9+/=]+)' \| base64", line)
+        assert m, line
+        assert base64.standard_b64decode(m.group(1)).decode("utf-8") == cmd
+
+    def test_bootstrap_contains_marker_and_installs_git(self):
+        line = Orchestrator._azure_bootstrap_command_line("true")
+        assert "===NEXUS_OUTPUT_START===" in line
+        assert "apt-get install -y" in line and "git " in line
+        assert "eval " not in line
 
 
 class TestExtractMissingBinary:

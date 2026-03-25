@@ -32,10 +32,7 @@
 - Optional `FILE_PATCH` variant that inserts content at a specific line or after a pattern match.
 - Safer than piping through shell — content is written directly via Python `open()`, no injection possible.
 
-### 4. FTP Security Protection
-FTP-related commands need safety checks (anonymous login, plaintext credential exposure) in `security.py`.
-
-### 5. LLM Rate Limiting & Budget Tracking
+### 4. LLM Rate Limiting & Budget Tracking
 **Current state:** No throttling — a user in rapid-fire mode can burn through API credits in minutes.
 **What to build:**
 - Per-minute rate limiter in `LLMClient.generate_response()`.
@@ -98,6 +95,12 @@ FTP-related commands need safety checks (anonymous login, plaintext credential e
 
 ## ✅ Recently Shipped
 
+### Azure `AZURE_RUN` command transport
+- **All** user commands are passed with **base64 → `bash`**, not `eval` + `shlex.quote` inside a single-quoted `bash -c '…'` (which broke quoting and could truncate any command to the first token). Preflight refuses obviously incomplete lines (empty, bare `git`/`curl`/`wget`/`bash`/`sh -c`/etc.). Planner rule **#8** requires complete one-liners for sketchy/sandbox-eligible steps.
+
+### FTP safety (`security.py`)
+- **Strict validation** flags: passwords inside `ftp://user:pass@…` URLs, `wget --ftp-password=…`, `lftp -u user,password`, and **anonymous** FTP (`-u anonymous`, `--ftp-user=anonymous`, `ftp://anonymous@…`). These surface as warnings and **block** under `SafetyCheck.check_command` (strict), matching other high-risk patterns.
+
 ### Closed — were High Priority (tracking only)
 
 These used to sit in *High Priority*; they are **done** and described in detail in the dated sections below.
@@ -111,7 +114,7 @@ These used to sit in *High Priority*; they are **done** and described in detail 
 - **`rm -rf /` heuristics**: Root-delete detection no longer false-positives on `/tmp/...`, `/var/tmp/...`, or a **newline** between `/` and the rest of the path (wrapped shell lines). Stricter lookahead uses horizontal whitespace only where needed.
 - **Command generator retries**: Same-provider backoff on 429/timeouts/5xx, then fallback clients; empty LLM output retries instead of raising immediately.
 - **Orchestrator bugfix**: Removed inner `import os` inside `execute_plan` that shadowed the module and caused `UnboundLocalError` on `FILE_WRITE` self-heal when no `BROWSER` step had run.
-- **Test suite**: **182** `pytest` tests (security regressions for `rm` heuristics, path allowlists, command-generator fallback/retry cases).
+- **Test suite**: **192** `pytest` tests (security regressions for `rm` heuristics, path allowlists, FTP CLI exposure, command-generator fallback/retry cases).
 
 ### System Operations Overhaul (March 2026)
 - **DIRECT_EXECUTE Intent**: New `DIRECT_EXECUTE` action in the Decision Engine for simple, single-command operations (chmod, mkdir, cp, mv, tar, ls, df, free, etc.). Bypasses the full PLAN pipeline — no plan table, no confirmation, just generates and runs the command immediately. Heuristic regex patterns + LLM router awareness.
@@ -125,7 +128,7 @@ These used to sit in *High Priority*; they are **done** and described in detail 
 - **FILE_SEARCH Intelligent Filtering**: Smart noise filter excludes `site-packages`, `.venv`, `node_modules`, `__pycache__` from results. Prefers `fd`/`rg` over `find`/`grep`. Two-tier search with meaningful-result threshold.
 - **TUI Slash Commands Fixed**: `/find`, `/read`, `/do` registered as first-class TUI commands. `/search` gracefully handles non-Google providers.
 - **Azure Log Noise Eliminated**: Output marker (`===NEXUS_OUTPUT_START===`) separates bootstrap noise from command results. Only meaningful output shown to user.
-- **Test Suite Expanded**: 182+ automated tests across 10+ test files covering executor, planner, security, decision engine, audit logger, config manager, session manager, command generator, LLM client, package manager, and orchestrator.
+- **Test Suite Expanded**: 192+ automated tests across 10+ test files covering executor, planner, security, decision engine, audit logger, config manager, session manager, command generator, LLM client, package manager, and orchestrator.
 - **Security Hardened**: Shell injection fixed in FILE_SEARCH, `find` command, and AZURE_RUN. LLM-generated commands validated through SafetyCheck. Path traversal protection on `read`. Package name injection prevented. Config file permissions set to 0o600. Browser `disable_security` set to False.
 - **Crash Bugs Fixed**: `ImportError` on `nexus read`, `AttributeError` on session save, `NameError` in PLAN fallback, `asyncio` nested loop in browser manager.
 - **CI/CD Improved**: Dependency sync between `pyproject.toml` and `requirements.txt`. CI matrix for `[all]` extras. Ruff linting + `pip-audit` security scanning added.
