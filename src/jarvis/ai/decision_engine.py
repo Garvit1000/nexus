@@ -243,6 +243,35 @@ class DecisionEngine:
                 reasoning="Direct request to read local file content.",
             )
 
+        # 6. Direct Execute — simple single-command operations that skip the planner
+        direct_execute_patterns = [
+            # Filesystem operations with clear targets
+            r"^(make|chmod)\s+.*(executable|writable|readable|\+[rwx])",
+            r"^(create|make|mkdir)\s+(a\s+)?(directory|folder|dir)\s+",
+            r"^(list|show|ls)\s+(files|directories|folders|contents)",
+            r"^(show|display|print|get|check)\s+(disk|memory|cpu|uptime|hostname|ip\b|ram|swap|storage)",
+            r"^(show|check|get|display)\s+(which|where|path|version|info)\b",
+            r"^(extract|unzip|untar|decompress|unpack)\s+\S+",
+            r"^(copy|cp)\s+\S+\s+\S+",
+            r"^(move|mv|rename)\s+\S+\s+\S+",
+            r"^(delete|rm|remove)\s+(file|folder|directory)\s+",
+            r"^(create|touch)\s+(file|a file)\s+",
+            r"^(show|get|check)\s+(file\s+)?size\s+",
+            r"^(change|set)\s+(permissions?|owner|group)\s+",
+            # System info one-liners
+            r"^(disk\s+usage|disk\s+space|free\s+space|memory\s+usage)",
+            r"^(what\s+is\s+my\s+ip|my\s+ip|current\s+directory|pwd|whoami|who am i)",
+            r"^(show|get|check)\s+(system\s+)?(info|information|specs|details|status)$",
+            r"^(kill|stop)\s+(process|pid)\s+",
+            r"^(check|test|verify)\s+(if\s+)?(file|directory|folder|port)\s+.*\s+(exists|open|running|available)",
+        ]
+        if any(re.search(pat, text) for pat in direct_execute_patterns):
+            return Intent(
+                action="DIRECT_EXECUTE",
+                confidence=0.92,
+                reasoning="Simple single-command operation — direct execution without planning.",
+            )
+
         # --- Memory Context: Retrieve relevant past actions ---
         memory_context = ""
         if (
@@ -292,13 +321,19 @@ class DecisionEngine:
             prompt = f"""Nexus intent router. Classify the user's request into one action.
 {memory_context}{session_context}
 ACTIONS:
-- COMMAND: single-step (install/remove/update). Use "command":"/install docker"
-- PLAN: multi-step, web, file ops, system checks, anything requiring execution
+- COMMAND: single-step package management (install/remove/update). Use "command":"/install docker"
+- DIRECT_EXECUTE: simple filesystem/system operations that need ONE shell command (chmod, mkdir, cp, mv, tar, ls, df, free, etc.)
+- PLAN: multi-step tasks, web data, complex file ops, app setup (AppImage/deb/rpm), anything requiring 2+ steps
 - SEARCH: simple fact lookup ("who is CEO of Google?")
 - CHAT: greeting, opinion, explanation ONLY
 - CLARIFY: if intent is very ambiguous (confidence<0.70), provide clarification_options
 
-RULES: "show me/get/fetch/find/check/download X" → PLAN. "install X" → COMMAND. When in doubt → PLAN.
+RULES:
+- "install X" (package name) → COMMAND. "install /path/to/file.deb" → PLAN (needs dpkg).
+- Simple single-command ops (chmod, mkdir, cp, mv, extract, system info) → DIRECT_EXECUTE
+- "setup/configure AppImage/deb" → PLAN (multi-step with desktop entry, icons, etc.)
+- "show me/get/fetch/find/check/download X" → PLAN. When in doubt → PLAN.
+- Pure questions with no action needed → CHAT.
 
 INPUT: "{text}"
 
@@ -308,9 +343,16 @@ EXAMPLES:
 "what is docker?" → {{"action":"CHAT","confidence":0.90,"reasoning":"informational"}}
 "who is CEO of Google?" → {{"action":"SEARCH","confidence":0.95,"reasoning":"fact lookup"}}
 "find my bashrc" → {{"action":"PLAN","confidence":0.95,"reasoning":"file search task"}}
+"make file.sh executable" → {{"action":"DIRECT_EXECUTE","confidence":0.95,"reasoning":"single chmod command"}}
+"show disk usage" → {{"action":"DIRECT_EXECUTE","confidence":0.95,"reasoning":"single df command"}}
+"extract archive.tar.gz" → {{"action":"DIRECT_EXECUTE","confidence":0.90,"reasoning":"single tar command"}}
+"setup this AppImage" → {{"action":"PLAN","confidence":0.95,"reasoning":"multi-step AppImage installation with desktop integration"}}
+"install /home/user/app.deb" → {{"action":"PLAN","confidence":0.95,"reasoning":"local deb install needs dpkg + dependency fix"}}
+"list files in /etc" → {{"action":"DIRECT_EXECUTE","confidence":0.95,"reasoning":"single ls command"}}
+"check memory usage" → {{"action":"DIRECT_EXECUTE","confidence":0.95,"reasoning":"single free command"}}
 
 JSON ONLY:
-{{"action":"PLAN|COMMAND|CHAT|SEARCH|CLARIFY","command":"only if COMMAND","confidence":0.0-1.0,"reasoning":"...","clarification_options":["only","if","CLARIFY"]}}
+{{"action":"PLAN|COMMAND|DIRECT_EXECUTE|CHAT|SEARCH|CLARIFY","command":"only if COMMAND","confidence":0.0-1.0,"reasoning":"...","clarification_options":["only","if","CLARIFY"]}}
 """
             try:
                 # We use a lower temperature if possible, but our client interface is simple.

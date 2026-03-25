@@ -205,7 +205,9 @@ if config_mgr.config.use_supermemory and config_mgr.config.supermemory_api_key:
     if sys_context not in existing_memories:
         memory_client.add_memory(sys_context, metadata={"type": "system_info"})
 
-command_generator = CommandGenerator(llm_client, sys_detector.get_info())
+command_generator = CommandGenerator(
+    llm_client, sys_detector.get_info(), fallback_clients=fallback_clients
+)
 
 
 @app.command()

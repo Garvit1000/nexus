@@ -111,3 +111,46 @@ class TestSudoDetection:
 
     def test_ls_does_not_require_sudo(self):
         assert SafetyCheck.is_sudo_required("ls /home") is False
+
+    def test_chmod_user_file_does_not_require_sudo(self):
+        """chmod on user paths must not force interactive sudo (TUI would hang)."""
+        assert SafetyCheck.is_sudo_required("chmod +x /home/user/app.AppImage") is False
+        assert SafetyCheck.is_sudo_required("chmod +x ~/.local/bin/foo") is False
+
+    def test_chmod_system_path_still_requires_sudo_heuristic(self):
+        assert SafetyCheck.is_sudo_required("chmod 644 /etc/hosts") is True
+
+
+class TestRmRfHeuristics:
+    """rm -rf /tmp/... must not be misclassified as rm -rf / (root)."""
+
+    def test_rm_tmp_cleanup_passes_strict(self):
+        v = CommandValidator()
+        cmd = (
+            "update-desktop-database ~/.local/share/applications/ 2>/dev/null; "
+            "rm -rf /tmp/recordly-extract && true"
+        )
+        r = v.validate(cmd, strict=True)
+        assert r.is_valid, r.reasoning
+
+    def test_rm_var_tmp_passes_strict(self):
+        v = CommandValidator()
+        r = v.validate("rm -rf /var/tmp/appimage-work && echo ok", strict=True)
+        assert r.is_valid, r.reasoning
+
+    def test_rm_tmp_after_newline_not_root_delete(self):
+        """\\n after / must not satisfy 'whitespace after root' (\\s false positive)."""
+        v = CommandValidator()
+        cmd = "update-desktop-database ~/.local/share/applications/; rm -rf /\n/tmp/squashfs-root && true"
+        r = v.validate(cmd, strict=True)
+        assert r.is_valid, r.reasoning
+
+    def test_rm_rf_root_still_blocked_strict(self):
+        v = CommandValidator()
+        r = v.validate("rm -rf / && echo done", strict=True)
+        assert not r.is_valid
+
+    def test_rm_rf_root_space_still_blocked(self):
+        v = CommandValidator()
+        r = v.validate("rm -rf / ", strict=True)
+        assert not r.is_valid

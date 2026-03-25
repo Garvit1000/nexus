@@ -10,7 +10,7 @@ Verifies that:
 """
 
 import pytest
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 from jarvis.ai.command_generator import CommandGenerator
 from jarvis.core.security import SecurityViolation
 from jarvis.core.system_detector import SystemInfo, PackageManager
@@ -83,6 +83,53 @@ class TestMemoryIntegration:
         gen = CommandGenerator(_mock_llm("echo hi"), _sys_info())
         cmd = gen.generate_command("say hi")
         assert cmd == "echo hi"
+
+
+class TestFallbackClients:
+    @patch("jarvis.ai.command_generator.time.sleep")
+    def test_tries_fallback_on_primary_failure(self, _mock_sleep):
+        primary = MagicMock()
+        # Non-transient error: skip per-client retries, go straight to fallback.
+        primary.generate_response.side_effect = RuntimeError("invalid_api_key 401")
+        fallback = MagicMock()
+        fallback.generate_response.return_value = "echo recovered"
+        gen = CommandGenerator(primary, _sys_info(), fallback_clients=[fallback])
+        cmd = gen.generate_command("say hi")
+        assert cmd == "echo recovered"
+        primary.generate_response.assert_called_once()
+        fallback.generate_response.assert_called_once()
+
+    @patch("jarvis.ai.command_generator.time.sleep")
+    def test_retries_same_client_on_rate_limit_then_succeeds(self, _mock_sleep):
+        primary = MagicMock()
+        primary.generate_response.side_effect = [
+            RuntimeError("Error 429: rate limit exceeded"),
+            RuntimeError("Error 429: rate limit exceeded"),
+            "echo third_try",
+        ]
+        gen = CommandGenerator(primary, _sys_info(), fallback_clients=[])
+        cmd = gen.generate_command("say hi")
+        assert cmd == "echo third_try"
+        assert primary.generate_response.call_count == 3
+
+    @patch("jarvis.ai.command_generator.time.sleep")
+    def test_empty_response_then_fallback(self, _mock_sleep):
+        primary = MagicMock()
+        primary.generate_response.side_effect = ["", "   ", "\n"]
+        fallback = MagicMock()
+        fallback.generate_response.return_value = "echo from_fallback"
+        gen = CommandGenerator(primary, _sys_info(), fallback_clients=[fallback])
+        cmd = gen.generate_command("say hi")
+        assert cmd == "echo from_fallback"
+        assert primary.generate_response.call_count == 3
+        fallback.generate_response.assert_called_once()
+
+    def test_dedupes_same_client_in_fallback_list(self):
+        shared = _mock_llm("echo once")
+        gen = CommandGenerator(shared, _sys_info(), fallback_clients=[shared])
+        cmd = gen.generate_command("x")
+        assert cmd == "echo once"
+        assert shared.generate_response.call_count == 1
 
 
 class TestPromptContent:

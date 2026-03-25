@@ -41,8 +41,17 @@ class CommandValidator:
     """
 
     # Dangerous patterns that should trigger warnings
+    # NOTE: "rm -rf /" must match ONLY true root deletes, not /tmp, /usr, /var, ...
+    # Lookahead must NOT use \s — that includes \n/\r and false-positives on
+    # "rm -rf /\n/tmp/foo" (newline between / and tmp looks like "then whitespace after /").
+    # Only allow: end, ;, &&, ||, or spaces/tabs then those (horizontal whitespace only).
+    _RM_RF_ROOT_LOOKAHEAD = r"(?=$|;|&&|\|\||[ \t]+(?:$|;|&&|\|\|))"
     DANGEROUS_PATTERNS = [
-        (r"rm\s+-rf\s+/", "Recursive delete on root directory"),
+        (
+            r"rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/" + _RM_RF_ROOT_LOOKAHEAD,
+            "Recursive delete on root directory",
+        ),
+        (r"rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/\*", "Recursive delete on root wildcard"),
         (r"dd\s+if=/dev/(zero|urandom)\s+of=/dev/sd", "Disk wipe operation"),
         (r":\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:", "Fork bomb pattern"),
         (r"mkfs\.", "Filesystem format operation"),
@@ -54,7 +63,11 @@ class CommandValidator:
 
     # Patterns that are always blocked
     BLOCKED_PATTERNS = [
-        (r"rm\s+-rf\s+/\s*$", "Attempting to delete root directory"),
+        (
+            r"rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/" + _RM_RF_ROOT_LOOKAHEAD,
+            "Attempting to delete root directory",
+        ),
+        (r"rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/\*", "Attempting to delete root wildcard"),
         (r":\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:", "Fork bomb detected"),
     ]
 
@@ -229,6 +242,9 @@ class SafetyCheck:
         """
         Heuristic to check if a command likely needs sudo.
         """
+        # NOTE: "chmod" is intentionally omitted. User-owned files (AppImage in ~/Downloads,
+        # ~/.local/bin) must NOT go through interactive sudo — that path blocks the TUI on a
+        # password prompt with no timeout. System paths still match " /etc/"|"/usr/"|"/var/" below.
         privileged_commands = [
             "apt",
             "dnf",
@@ -237,7 +253,6 @@ class SafetyCheck:
             "mount",
             "umount",
             "chown",
-            "chmod",
         ]
         first_word = command.split()[0] if command else ""
 

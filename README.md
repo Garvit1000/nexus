@@ -8,9 +8,14 @@
 - **Autonomous Web Browsing** - Automated tasks with browser-use
 - **Persistent Memory** - RAG-based context retention with Supermemory
 - **Self-Healing Execution** - Auto-fix failed commands and auto-failover LLM routing
-- **Intelligent Intent Recognition** - Context-aware decision making
-- **Security First** - AST-based defensive command validation and user confirmation
+- **Resilient Command Generation** - Retries transient API errors (429, timeouts) per provider, then falls back to alternate models; empty replies do not block the chain
+- **Intelligent Intent Recognition** - Context-aware decision making (including **DIRECT_EXECUTE** for simple one-shot shell tasks)
+- **Security First** - AST-based defensive command validation, strict `rm -rf /` detection (without false positives on `/tmp/...` or wrapped lines), and user confirmation
 - **Ephemeral Azure Sandboxing** - User-controlled cloud sandbox for running untrusted or risky commands safely
+
+### Maturity snapshot (March 2026)
+
+Nexus is best described as **production-leaning for a power-user TUI**: the execution stack (planner, executor, security gate, audit log, self-heal loop, LLM fallbacks) is **well tested** (**176** automated `pytest` cases) and hardened from real failure modes (rate limits, bad JSON plans, sudo/interactive edge cases). Remaining risk is mostly **product** surface area: no automatic rollback checkpoints yet, `FILE_WRITE` always **replaces** whole files (no first-class append/patch action), and plans are still sequential. For **AppImage + desktop integration**, the planner encodes a full procedure (extract, icon, `FILE_WRITE` `.desktop`, `update-desktop-database`, Electron `--no-sandbox`); extraction of large images can take many minutes and is supported with an extended subprocess timeout.
 
 ## Architecture Overview
 
@@ -359,7 +364,8 @@ graph TB
 #### `command_generator.py` - Natural Language → Shell Commands
 - Converts user requests to executable shell commands
 - Uses RAG to retrieve proven solutions from memory
-- Implements safety guidelines and idempotency principles
+- **Retries** transient provider failures on the same model (with backoff), then tries **fallback** clients; treats empty model output as retryable
+- Implements safety guidelines and idempotency principles (`SafetyCheck` before return)
 
 #### `decision_engine.py` - Intent Classification
 - **Fast Path**: Regex-based heuristics for common commands
@@ -374,9 +380,11 @@ graph TB
 ### Core Systems (`src/jarvis/core/`)
 
 #### `orchestrator.py` - Multi-Step Task Execution
-- **Planner**: Breaks complex requests into steps (CHECK → BROWSER → TERMINAL)
+- **Planner**: Breaks complex requests into steps (CHECK → BROWSER → TERMINAL → FILE_WRITE / FILE_READ / FILE_SEARCH / …)
 - **Smart Resume**: Checks if files already exist before downloading
-- **Self-Healing**: Auto-fixes failed commands using LLM reflection
+- **Self-Healing**: Auto-fixes failed commands using LLM reflection (plus fast local heuristics for common install/path errors)
+- **FILE_WRITE**: Writes **full file contents** (overwrite). Paths under your **home directory** use Python `write_text` (no sudo); **system paths** use `sudo mkdir -p` + `sudo tee`. Failed writes retry once with mkdir / sudo (see self-heal block). There is **no** `FILE_APPEND` yet — to append (e.g. a line in `~/.zshrc`), the planner typically uses a **TERMINAL** step (`echo '…' >> ~/.zshrc`) which is subject to normal shell safety checks and confirmation.
+- **AppImage / desktop flow (planner-guided)**: chmod + copy to `~/.local/bin`, **`--appimage-extract`** (non-interactive, long timeout for big bundles), copy icon, **`FILE_WRITE`** a fresh `~/.local/share/applications/*.desktop` (not the squashfs copy — wrong `Exec`/`Icon`), **`update-desktop-database`**, and for Electron/Chromium bundles **`--no-sandbox`** on `Exec=`. Residual gaps: concurrent extracts should use a **dedicated `mktemp -d`** under `/tmp` to avoid `squashfs-root` collisions; icons are “best effort” from a shallow `find`.
 - **Live UI**: Real-time progress tracking with Rich tables
 
 #### `executor.py` & `security.py` — Safe Command Execution
@@ -522,7 +530,7 @@ nexus search "best restaurants in Dubai"
 
 ## Testing
 
-Nexus ships with **165 automated pytest tests** across 10 test files, covering every critical code path. Run them anytime:
+Nexus ships with **176 automated pytest tests** across 10+ test files, covering every critical code path. Run them anytime:
 
 ```bash
 # Install dev dependencies (first time only)
@@ -540,7 +548,7 @@ pytest tests/test_executor.py -v
 
 ### Test Coverage Map
 
-#### `tests/test_security.py` — 16 tests
+#### `tests/test_security.py` — 24 tests
 **What it checks:** The `CommandValidator` and `SafetyCheck` layer that sits before every command execution.
 
 | Test Group | Checks |
@@ -549,7 +557,8 @@ pytest tests/test_executor.py -v
 | `TestCommandValidatorWarnings` | `curl ... \| sh` is allowed but raises a warning; `ls` has zero warnings |
 | `TestCommandValidatorSyntax` | Mismatched quotes and unbalanced parentheses are caught as syntax errors |
 | `TestSafetyCheckIntegration` | `SafetyCheck.check_command()` raises `SecurityViolation` on blocked commands, returns `True` on safe ones |
-| `TestSudoDetection` | `apt`, `systemctl`, writing to `/etc/` are correctly flagged as requiring sudo; `echo`, `ls` are not |
+| `TestSudoDetection` | `apt`, `systemctl`, writing to `/etc/` are correctly flagged as requiring sudo; `chmod` on user paths is not forced interactive |
+| `TestRmRfHeuristics` | `rm -rf /tmp/...` and similar are **not** misread as `rm -rf /`; newline after `/` does not false-positive |
 
 **Why it matters:** This is the last line of defence against AI-hallucinated destructive commands. If this breaks, Nexus could execute `rm -rf /` without user confirmation.
 
@@ -614,8 +623,8 @@ pytest tests/test_executor.py -v
 #### `tests/test_session_manager.py` — 29 tests
 **What it checks:** Turn tracking, history trimming, context reference detection (pronouns, temporal markers), semantic relatedness filtering to prevent false-positive cache hits, and session summary generation.
 
-#### `tests/test_command_generator.py` — 11 tests
-**What it checks:** LLM response cleanup (markdown fences, backticks, whitespace), SafetyCheck validation on generated commands, and memory integration (RAG query + feedback storage).
+#### `tests/test_command_generator.py` — 15 tests
+**What it checks:** LLM response cleanup (markdown fences, backticks, whitespace), SafetyCheck validation on generated commands, memory integration (RAG query + feedback storage), and **fallback / retry** behavior (429-style errors, empty responses, deduped clients).
 
 #### `tests/test_llm_client.py` — 11 tests
 **What it checks:** Base `LLMClient` prompt enrichment (memory prepend, skip, double-enrichment guard, exception handling), `MockLLMClient` fallback, and `search()` raising `NotImplementedError`.
@@ -723,7 +732,7 @@ nexus/
 │   ├── utils/
 │   │   └── syntax_output.py     # Rich syntax highlighting for file reads
 │   └── main.py                  # CLI entry point (Typer)
-├── tests/                       # 165 pytest tests across 10 files
+├── tests/                       # 176+ pytest tests
 ├── docs/
 │   ├── FUTURE_SCOPE.md          # Roadmap + shipped features
 │   ├── architecture_overview.md # Architecture deep-dive with Mermaid diagrams
@@ -751,10 +760,10 @@ nexus/
 See [docs/FUTURE_SCOPE.md](docs/FUTURE_SCOPE.md) for the full roadmap.
 
 **Shipped:**
-Multi-brain AI architecture, Supermemory RAG, browser automation with key rotation, self-healing execution, exponential backoff, SERVICE_MGT, persistent sessions, audit logging, secure sudo, shell injection hardening, 165-test suite, CI with linting and security scanning.
+Multi-brain AI architecture, Supermemory RAG, browser automation with key rotation, self-healing execution, exponential backoff (planner) + **command-generator retries/fallbacks**, SERVICE_MGT, **DIRECT_EXECUTE**, planner system-ops knowledge (AppImage, deb, rpm, desktop entries), persistent sessions, audit logging, secure sudo, shell injection hardening, **176-test** suite, CI with linting and security scanning.
 
 **Up next:**
-Rollback checkpoints, dynamic slash command registry, APP_INSTALL action, direct execution for small tasks, LLM rate limiting, context window management, parallel step execution.
+Rollback checkpoints, dynamic slash command registry, **FILE_APPEND / FILE_PATCH**, LLM rate limiting & budgets, context window management, parallel step execution.
 
 **Long-term:**
 MCP integration, Git assistant, Docker management mode, natural language cron jobs, interactive desktop avatar.

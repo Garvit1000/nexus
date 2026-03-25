@@ -1,37 +1,149 @@
+import logging
+import random
+import time
+from typing import List, Optional
+
 from .llm_client import LLMClient
 from ..core.system_detector import SystemInfo
 from ..core.security import SafetyCheck, SecurityViolation
 
+# Retries per provider before trying the next fallback client.
+_MAX_API_RETRIES = 3
+
+
+def _is_retryable_api_error(exc: BaseException) -> bool:
+    """True for transient provider errors where a short backoff may succeed."""
+    msg = str(exc).lower()
+    needles = (
+        "429",
+        "rate limit",
+        "too many requests",
+        "resource exhausted",
+        "503",
+        "502",
+        "504",
+        "timeout",
+        "timed out",
+        "temporarily unavailable",
+        "overloaded",
+        "connection reset",
+        "connection refused",
+        "eof occurred",
+    )
+    if any(n in msg for n in needles):
+        return True
+    name = type(exc).__name__.lower()
+    return any(
+        frag in name
+        for frag in ("ratelimit", "timeout", "serviceunavailable", "apierror", "internalserver")
+    )
+
 
 class CommandGenerator:
-    def __init__(self, llm_client: LLMClient, system_info: SystemInfo):
+    def __init__(
+        self,
+        llm_client: LLMClient,
+        system_info: SystemInfo,
+        fallback_clients: Optional[List[LLMClient]] = None,
+    ):
         self.llm = llm_client
         self.system_info = system_info
+        self._clients: List[LLMClient] = [llm_client]
+        if fallback_clients:
+            for c in fallback_clients:
+                if c is not None and c not in self._clients:
+                    self._clients.append(c)
 
     def generate_command(self, user_request: str) -> str:
         """
         Converts a natural language request into a shell command.
         Validates the generated command through SafetyCheck before returning.
+        Retries transient API failures on the same client, then tries fallback
+        clients (same spirit as the planner).
         """
         prompt = self._build_prompt(user_request)
-        response_text = self.llm.generate_response(prompt)
-        command = self._parse_response(response_text)
+        last_error: Optional[Exception] = None
 
-        try:
-            SafetyCheck.check_command(command)
-        except SecurityViolation as e:
-            raise SecurityViolation(
-                f"LLM generated an unsafe command: {e}. "
-                f"Original request: '{user_request}'"
-            )
+        for client_idx, client in enumerate(self._clients):
+            if client_idx > 0:
+                delay = min(1.0 + random.random(), 3.0)
+                time.sleep(delay)
+            client_name = type(client).__name__
+            client_last_error: Optional[Exception] = None
 
-        if self.llm.memory_client:
-            self.llm.memory_client.add_memory(
-                content=f"User requested: '{user_request}'. Nexus generated: '{command}'",
-                metadata={"type": "command_generation", "os": self.system_info.os_name},
-            )
+            for api_try in range(_MAX_API_RETRIES):
+                if api_try > 0:
+                    backoff = min(2.0 ** api_try, 12.0) + random.random()
+                    time.sleep(backoff)
+                try:
+                    response_text = client.generate_response(prompt)
+                    command = self._parse_response(response_text).strip()
+                    if not command:
+                        client_last_error = RuntimeError(
+                            "LLM returned an empty command"
+                        )
+                        if api_try + 1 < _MAX_API_RETRIES:
+                            logging.warning(
+                                f"[CommandGenerator] {client_name}: empty response, retrying"
+                            )
+                            continue
+                        logging.warning(
+                            f"[CommandGenerator] {client_name}: empty after "
+                            f"{_MAX_API_RETRIES} tries, next client"
+                        )
+                        break
 
-        return command
+                    try:
+                        SafetyCheck.check_command(command)
+                    except SecurityViolation as e:
+                        raise SecurityViolation(
+                            f"LLM generated an unsafe command: {e}. "
+                            f"Original request: '{user_request}'"
+                        )
+
+                    if self.llm.memory_client:
+                        self.llm.memory_client.add_memory(
+                            content=(
+                                f"User requested: '{user_request}'. "
+                                f"Nexus generated: '{command}'"
+                            ),
+                            metadata={
+                                "type": "command_generation",
+                                "os": self.system_info.os_name,
+                            },
+                        )
+
+                    if client_idx > 0 or api_try > 0:
+                        logging.info(
+                            f"Command generated by {client_name}"
+                            + (
+                                f" (fallback client, attempt {client_idx})"
+                                if client_idx > 0
+                                else f" (retry {api_try})"
+                            )
+                        )
+                    return command
+
+                except SecurityViolation:
+                    raise
+                except Exception as e:
+                    client_last_error = e
+                    if api_try + 1 < _MAX_API_RETRIES and _is_retryable_api_error(e):
+                        logging.warning(
+                            f"[CommandGenerator] {client_name} API error "
+                            f"(retry {api_try + 1}/{_MAX_API_RETRIES}): {e}"
+                        )
+                        continue
+                    logging.warning(
+                        f"[CommandGenerator] {client_name} failed: {e}"
+                    )
+                    break
+
+            last_error = client_last_error or last_error
+
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("Command generation failed: no LLM clients configured")
 
     def _build_prompt(self, request: str) -> str:
         # --- RAG: Retrieve Proven Solutions ---
