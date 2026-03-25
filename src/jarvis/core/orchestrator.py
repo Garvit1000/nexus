@@ -342,15 +342,23 @@ class Orchestrator:
         return None
 
     @staticmethod
-    def _extract_file_path_from_command(command: str, extensions: list) -> Optional[str]:
+    def _extract_file_path_from_command(
+        command: str, extensions: list
+    ) -> Optional[str]:
         """Extract a file path ending with one of the given extensions from a command string."""
         import re as _re
 
         for ext in extensions:
-            m = _re.search(r'((?:/[\w.+\-]+)+' + _re.escape(ext) + r')', command, _re.IGNORECASE)
+            m = _re.search(
+                r"((?:/[\w.+\-]+)+" + _re.escape(ext) + r")", command, _re.IGNORECASE
+            )
             if m:
                 return m.group(1)
-            m = _re.search(r'((?:~|\.)/[\w./+\-]+' + _re.escape(ext) + r')', command, _re.IGNORECASE)
+            m = _re.search(
+                r"((?:~|\.)/[\w./+\-]+" + _re.escape(ext) + r")",
+                command,
+                _re.IGNORECASE,
+            )
             if m:
                 return m.group(1)
         return None
@@ -373,7 +381,10 @@ class Orchestrator:
         error_lower = error_output.lower()
         cmd_lower = failed_command.lower()
 
-        if "unable to locate package" in error_lower or "couldn't find any package" in error_lower:
+        if (
+            "unable to locate package" in error_lower
+            or "couldn't find any package" in error_lower
+        ):
             file_path = self._extract_file_path_from_command(
                 failed_command, [".deb", ".appimage", ".rpm"]
             )
@@ -387,7 +398,9 @@ class Orchestrator:
             elif any(ext in cmd_lower for ext in [".deb", ".appimage", ".rpm"]):
                 for token in failed_command.split():
                     t = token.strip("'\"")
-                    if any(t.lower().endswith(ext) for ext in [".deb", ".appimage", ".rpm"]):
+                    if any(
+                        t.lower().endswith(ext) for ext in [".deb", ".appimage", ".rpm"]
+                    ):
                         if ".deb" in t.lower():
                             return f"sudo dpkg -i {t} && sudo apt-get install -f -y"
                         if ".appimage" in t.lower():
@@ -412,7 +425,9 @@ class Orchestrator:
         if "permission denied" in error_lower and "sudo" not in cmd_lower:
             return f"sudo {failed_command}"
 
-        if "is a directory" in error_lower and ("cp " in cmd_lower or "mv " in cmd_lower):
+        if "is a directory" in error_lower and (
+            "cp " in cmd_lower or "mv " in cmd_lower
+        ):
             if "cp " in cmd_lower and " -r" not in cmd_lower and " -a" not in cmd_lower:
                 return failed_command.replace("cp ", "cp -r ", 1)
 
@@ -861,9 +876,8 @@ If it cannot be fixed, return: UNFIXABLE
                         if _rerouted:
                             await self._execute_file_search(step, context)
                         elif (
-                            "sudo" in step.command or SafetyCheck.is_sudo_required(
-                                step.command
-                            )
+                            "sudo" in step.command
+                            or SafetyCheck.is_sudo_required(step.command)
                         ) and "--appimage-extract" not in step.command:
                             # Interactive path has no timeout — never use it for AppImage extract
                             # (can hang forever; use run() + sudo -S + long timeout instead).
@@ -941,9 +955,13 @@ If it cannot be fixed, return: UNFIXABLE
                             try:
                                 if is_user_path:
                                     # User-writable path: use Python open() directly (no sudo needed)
-                                    await asyncio.to_thread(parent_dir.mkdir, parents=True, exist_ok=True)
+                                    await asyncio.to_thread(
+                                        parent_dir.mkdir, parents=True, exist_ok=True
+                                    )
+
                                     def _write_file():
                                         abs_path.write_text(content, encoding="utf-8")
+
                                     await asyncio.to_thread(_write_file)
                                     step.output = f"Successfully wrote to {file_path}"
                                     step.status = "success"
@@ -952,19 +970,29 @@ If it cannot be fixed, return: UNFIXABLE
                                     import subprocess
 
                                     safe_path = shlex.quote(str(abs_path))
-                                    mkdir_cmd = f"sudo mkdir -p {shlex.quote(str(parent_dir))}"
+                                    mkdir_cmd = (
+                                        f"sudo mkdir -p {shlex.quote(str(parent_dir))}"
+                                    )
                                     await asyncio.to_thread(
-                                        subprocess.run, mkdir_cmd, shell=True,
-                                        capture_output=True, text=True,
+                                        subprocess.run,
+                                        mkdir_cmd,
+                                        shell=True,
+                                        capture_output=True,
+                                        text=True,
                                     )
                                     write_command = f"sudo tee {safe_path} > /dev/null"
                                     process = await asyncio.to_thread(
-                                        subprocess.run, write_command,
-                                        input=content, text=True,
-                                        shell=True, capture_output=True,
+                                        subprocess.run,
+                                        write_command,
+                                        input=content,
+                                        text=True,
+                                        shell=True,
+                                        capture_output=True,
                                     )
                                     if process.returncode == 0:
-                                        step.output = f"Successfully wrote to {file_path}"
+                                        step.output = (
+                                            f"Successfully wrote to {file_path}"
+                                        )
                                         step.status = "success"
                                     else:
                                         step.output = f"Failed to write file (RC={process.returncode}): {process.stderr}"
@@ -1188,26 +1216,39 @@ If it cannot be fixed, return: UNFIXABLE
                     if step.action == "FILE_WRITE" and step.file_content:
                         from pathlib import Path as _HealPath
 
-                        _fw_path = _HealPath(os.path.expanduser(step.command.strip())).resolve()
+                        _fw_path = _HealPath(
+                            os.path.expanduser(step.command.strip())
+                        ).resolve()
                         _fw_parent = _fw_path.parent
                         try:
                             live.stop()
-                            await asyncio.to_thread(_fw_parent.mkdir, parents=True, exist_ok=True)
+                            await asyncio.to_thread(
+                                _fw_parent.mkdir, parents=True, exist_ok=True
+                            )
+
                             def _heal_write():
                                 _fw_path.write_text(step.file_content, encoding="utf-8")
+
                             await asyncio.to_thread(_heal_write)
                             step.output = f"Successfully wrote to {step.command.strip()} (retry via direct write)"
                             step.status = "success"
                         except PermissionError:
                             # Fall back to sudo tee
                             import subprocess as _sp
+
                             safe_p = shlex.quote(str(_fw_path))
                             _mk = f"sudo mkdir -p {shlex.quote(str(_fw_parent))}"
-                            await asyncio.to_thread(_sp.run, _mk, shell=True, capture_output=True)
+                            await asyncio.to_thread(
+                                _sp.run, _mk, shell=True, capture_output=True
+                            )
                             _wc = f"sudo tee {safe_p} > /dev/null"
                             _proc = await asyncio.to_thread(
-                                _sp.run, _wc, input=step.file_content, text=True,
-                                shell=True, capture_output=True,
+                                _sp.run,
+                                _wc,
+                                input=step.file_content,
+                                text=True,
+                                shell=True,
+                                capture_output=True,
                             )
                             if _proc.returncode == 0:
                                 step.output = f"Successfully wrote to {step.command.strip()} (retry via sudo)"
