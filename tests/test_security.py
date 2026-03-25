@@ -123,6 +123,44 @@ class TestSudoDetection:
         assert SafetyCheck.is_sudo_required("chmod 644 /etc/hosts") is True
 
 
+class TestFtpSecurity:
+    """FTP-related patterns: credentials on CLI and anonymous login (FUTURE_SCOPE)."""
+
+    def test_ftp_url_embedded_password_fails_strict(self):
+        v = CommandValidator()
+        r = v.validate(
+            "curl -O ftp://alice:secret1@ftp.example.com/file.txt", strict=True
+        )
+        assert not r.is_valid
+        blob = " ".join(r.warnings) + r.reasoning
+        assert "FTP" in blob and "password" in blob.lower()
+
+    def test_wget_ftp_password_flag_fails_strict(self):
+        v = CommandValidator()
+        r = v.validate(
+            "wget --ftp-password=hunter2 ftp://ftp.example.com/pub/README",
+            strict=True,
+        )
+        assert not r.is_valid
+
+    def test_lftp_user_comma_password_fails_strict(self):
+        v = CommandValidator()
+        r = v.validate("lftp -u myuser,p4ss -e 'ls' ftp://ftp.example.com", strict=True)
+        assert not r.is_valid
+
+    def test_curl_anonymous_ftp_fails_strict(self):
+        v = CommandValidator()
+        r = v.validate("curl -u anonymous ftp://ftp.example.com/README", strict=True)
+        assert not r.is_valid
+        assert any("anonymous" in w.lower() for w in r.warnings)
+
+    def test_plain_https_download_still_ok(self):
+        v = CommandValidator()
+        r = v.validate("curl -fsSL https://example.com/install.sh", strict=True)
+        assert r.is_valid
+        assert r.warnings == []
+
+
 class TestPathWithinRoots:
     """Path.allowlist must use proper subtree checks, not str.startswith on home."""
 
