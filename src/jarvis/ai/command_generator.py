@@ -107,8 +107,11 @@ class CommandGenerator:
                             f"Original request: '{user_request}'"
                         )
 
-                    if self.llm.memory_client:
-                        self.llm.memory_client.add_memory(
+                    # Record on the client that actually produced the command (fallbacks may
+                    # use a different memory backend than the primary).
+                    mem = getattr(client, "memory_client", None)
+                    if mem:
+                        mem.add_memory(
                             content=(
                                 f"User requested: '{user_request}'. "
                                 f"Nexus generated: '{command}'"

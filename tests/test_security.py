@@ -8,6 +8,8 @@ Verifies that:
 - SafetyCheck.is_sudo_required correctly identifies privileged commands
 """
 
+from pathlib import Path
+
 import pytest
 from jarvis.core.security import CommandValidator, SafetyCheck, SecurityViolation
 
@@ -119,6 +121,31 @@ class TestSudoDetection:
 
     def test_chmod_system_path_still_requires_sudo_heuristic(self):
         assert SafetyCheck.is_sudo_required("chmod 644 /etc/hosts") is True
+
+
+class TestPathWithinRoots:
+    """Path.allowlist must use proper subtree checks, not str.startswith on home."""
+
+    def test_sibling_directory_not_confused_with_home_prefix(self, tmp_path: Path):
+        home = tmp_path / "user"
+        home.mkdir()
+        other = tmp_path / "user2"
+        other.mkdir()
+        secret = other / "secret.txt"
+        secret.write_text("x", encoding="utf-8")
+        assert SafetyCheck.is_path_within_any_root(secret, [home]) is False
+
+    def test_descendant_of_root_allowed(self, tmp_path: Path):
+        home = tmp_path / "user"
+        nested = home / "proj" / "a.txt"
+        nested.parent.mkdir(parents=True)
+        nested.write_text("ok", encoding="utf-8")
+        assert SafetyCheck.is_path_within_any_root(nested, [home]) is True
+
+    def test_exact_root_allowed(self, tmp_path: Path):
+        home = tmp_path / "user"
+        home.mkdir()
+        assert SafetyCheck.is_path_within_any_root(home, [home]) is True
 
 
 class TestRmRfHeuristics:
