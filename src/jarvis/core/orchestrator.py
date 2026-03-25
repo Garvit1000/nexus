@@ -485,14 +485,8 @@ class Orchestrator:
             if missing_path_str:
                 parent = Path(missing_path_str).expanduser().parent
                 # Skip cwd-only and filesystem root — mkdir -p is wrong or a no-op.
-                if (
-                    parent != Path(".")
-                    and str(parent) != "."
-                    and parent != Path("/")
-                ):
-                    return (
-                        f"mkdir -p {_shlex.quote(str(parent))} && {failed_command}"
-                    )
+                if parent != Path(".") and str(parent) != "." and parent != Path("/"):
+                    return f"mkdir -p {_shlex.quote(str(parent))} && {failed_command}"
 
         if "permission denied" in error_lower and "sudo" not in cmd_lower:
             return f"sudo {failed_command}"
@@ -1028,9 +1022,7 @@ If it cannot be fixed, return: UNFIXABLE
                                     await self._file_write_via_userland(
                                         abs_path, content
                                     )
-                                    step.output = (
-                                        f"Successfully wrote to {file_path}"
-                                    )
+                                    step.output = f"Successfully wrote to {file_path}"
                                     step.status = "success"
                                 else:
                                     rc, err = await self._file_write_via_sudo_tee(
