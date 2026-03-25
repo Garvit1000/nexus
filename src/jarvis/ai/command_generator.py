@@ -35,7 +35,13 @@ def _is_retryable_api_error(exc: BaseException) -> bool:
     name = type(exc).__name__.lower()
     return any(
         frag in name
-        for frag in ("ratelimit", "timeout", "serviceunavailable", "apierror", "internalserver")
+        for frag in (
+            "ratelimit",
+            "timeout",
+            "serviceunavailable",
+            "apierror",
+            "internalserver",
+        )
     )
 
 
@@ -73,7 +79,7 @@ class CommandGenerator:
 
             for api_try in range(_MAX_API_RETRIES):
                 if api_try > 0:
-                    backoff = min(2.0 ** api_try, 12.0) + random.random()
+                    backoff = min(2.0**api_try, 12.0) + random.random()
                     time.sleep(backoff)
                 try:
                     response_text = client.generate_response(prompt)
@@ -134,9 +140,7 @@ class CommandGenerator:
                             f"(retry {api_try + 1}/{_MAX_API_RETRIES}): {e}"
                         )
                         continue
-                    logging.warning(
-                        f"[CommandGenerator] {client_name} failed: {e}"
-                    )
+                    logging.warning(f"[CommandGenerator] {client_name} failed: {e}")
                     break
 
             last_error = client_last_error or last_error

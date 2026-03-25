@@ -642,9 +642,7 @@ class NexusApp:
                             self.console, out.strip(), action="execute", success=True
                         )
                     elif rc == 0:
-                        self.console.print(
-                            f"[{SUCCESS}]Done.[/{SUCCESS}]"
-                        )
+                        self.console.print(f"[{SUCCESS}]Done.[/{SUCCESS}]")
                     elif err:
                         from ..utils.syntax_output import print_error_output
 
