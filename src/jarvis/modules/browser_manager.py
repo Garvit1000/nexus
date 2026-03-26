@@ -9,10 +9,16 @@ class BrowserManager:
         api_key: str | object,
         openrouter_key: Optional[str] = None,
         provider: str = "google",
+        *,
+        google_browser_model: str = "gemini-2.5-flash",
+        openrouter_browser_model: str = "openai/gpt-oss-120b:free",
     ):
         from browser_use.llm import ChatGoogle
         from langchain_openai import ChatOpenAI
         from browser_use_sdk import BrowserUse
+
+        self._google_browser_model = google_browser_model
+        self._openrouter_browser_model = openrouter_browser_model
 
         if hasattr(api_key, "get_current_key"):
             self.key_rotator = api_key
@@ -23,12 +29,15 @@ class BrowserManager:
         if provider == "openrouter":
             self.llm = ChatOpenAI(
                 base_url="https://openrouter.ai/api/v1",
-                model="openai/gpt-oss-120b:free",
+                model=openrouter_browser_model,
                 api_key=openrouter_key,
             )
             self.use_vision = False
         else:
-            self.llm = ChatGoogle(model="gemini-2.5-flash", api_key=api_key)
+            self.llm = ChatGoogle(
+                model=google_browser_model,
+                api_key=api_key,
+            )
             self.use_vision = True
 
         self.cloud_client = None
@@ -55,7 +64,7 @@ class BrowserManager:
                     logging.debug(f"Using key attempt {attempt + 1}/{max_retries}")
 
                     self.llm = ChatGoogle(
-                        model="gemini-2.5-flash", api_key=self.api_key
+                        model=self._google_browser_model, api_key=self.api_key
                     )
 
                 result = self._execute_task(task_description, use_cloud)

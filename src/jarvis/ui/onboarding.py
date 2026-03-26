@@ -1,18 +1,38 @@
 from rich.console import Console
 from rich.panel import Panel
-from rich.prompt import Prompt, Confirm
+from rich.prompt import Prompt, Confirm, IntPrompt
 from rich.markdown import Markdown
 from rich.align import Align
 from time import sleep
 from typing import Optional
 
 from ..core.config_manager import ConfigManager
+from ..core.model_catalog import choices_for_task, key_flags_from_onboarding
 
 
 class OnboardingUI:
     def __init__(self, config_manager: ConfigManager, console: Console):
         self.config_mgr = config_manager
         self.console = console
+
+    def _pick_default_model(
+        self, task: str, step_title: str, key_flags: dict[str, bool]
+    ) -> Optional[str]:
+        choices = choices_for_task(task, key_flags)
+        if not choices:
+            return None
+        self.console.print(f"\n[bold cyan]{step_title}[/bold cyan]")
+        self.console.print("[dim]Same catalog as [cyan]/settings model[/cyan].[/dim]")
+        for i, (label, _mid) in enumerate(choices, 1):
+            self.console.print(f"  {i}. {label}")
+        default_idx = len(choices) + 1
+        self.console.print(
+            f"  [dim]{default_idx}. Use built-in default (recommended)[/dim]"
+        )
+        pick = IntPrompt.ask("Select", default=default_idx)
+        if pick < 1 or pick > len(choices):
+            return None
+        return choices[pick - 1][1]
 
     def run(self):
         self.console.clear()
@@ -109,7 +129,31 @@ class OnboardingUI:
                 else:
                     supermemory_key_to_save = sm_key.strip()
 
-        # 3. Save Configuration
+        # 3. Default models (same TASK_MODEL_OPTIONS as /settings model)
+        key_flags = key_flags_from_onboarding(
+            google_key, openrouter_key, groq_key, anthropic_key
+        )
+        self.console.print("\n[bold blue]Step 3: Default models[/bold blue]")
+        self.console.print(
+            "[dim]Pick defaults for each task, or keep built-in client defaults. "
+            "Change anytime with [cyan]/settings model[/cyan].[/dim]"
+        )
+
+        chat_model_pick = self._pick_default_model(
+            "chat", "Chat, planning, and /do", key_flags
+        )
+        router_model_pick = None
+        if key_flags.get("groq_api_key"):
+            router_model_pick = self._pick_default_model(
+                "router", "Router (intent classification)", key_flags
+            )
+        browser_model_pick = None
+        if key_flags.get("google_api_key") or key_flags.get("openrouter_api_key"):
+            browser_model_pick = self._pick_default_model(
+                "browser", "Browser automation (/browse)", key_flags
+            )
+
+        # 4. Save Configuration
         self.console.print(
             "\n[bold green]Setup Complete![/bold green] Saving configuration..."
         )
@@ -124,6 +168,12 @@ class OnboardingUI:
         )
         if supermemory_key_to_save is not None:
             save_kwargs["supermemory_api_key"] = supermemory_key_to_save
+        if chat_model_pick:
+            save_kwargs["chat_model"] = chat_model_pick
+        if router_model_pick:
+            save_kwargs["router_model"] = router_model_pick
+        if browser_model_pick:
+            save_kwargs["browser_model"] = browser_model_pick
         self.config_mgr.update(**save_kwargs)
         sleep(1)
         self.console.print(

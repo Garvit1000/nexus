@@ -28,6 +28,11 @@ if TYPE_CHECKING:
     from ..ai.decision_engine import Intent
 
 from ..ai.decision_engine import DecisionEngine, Intent
+from ..core.model_catalog import (
+    TASK_MODEL_OPTIONS,
+    find_client_for_provider,
+    resolve_provider_for_model,
+)
 
 
 # ── Colour palette ────────────────────────────────────────────────────────────
@@ -470,107 +475,16 @@ class NexusApp:
         )
         return await app.run_async()
 
-    _TASK_MODEL_OPTIONS = {
-        "chat": {
-            "label": "Chat / Planning / /do",
-            "models": {
-                "openrouter_api_key": {
-                    "provider": "OpenRouterClient",
-                    "items": [
-                        "openai/gpt-oss-120b:free",
-                        "moonshotai/kimi-k2-0905",
-                    ],
-                },
-                "anthropic_api_key": {
-                    "provider": "AnthropicClient",
-                    "items": [
-                        "claude-sonnet-4-20250514",
-                    ],
-                },
-                "groq_gpt_api_key": {
-                    "provider": "GroqGPTClient",
-                    "items": [
-                        "openai/gpt-oss-120b",
-                    ],
-                },
-                "groq_api_key": {
-                    "provider": "GroqClient",
-                    "items": [
-                        "moonshotai/kimi-k2-instruct-0905",
-                    ],
-                },
-                "google_api_key": {
-                    "provider": "GoogleGenAIClient",
-                    "items": [
-                        "gemini-2.5-flash",
-                        "gemini-1.5-flash",
-                        "gemini-flash-latest",
-                    ],
-                },
-            },
-        },
-        "router": {
-            "label": "Router / Decision Engine",
-            "models": {
-                "groq_api_key": {
-                    "provider": "GroqClient",
-                    "items": [
-                        "moonshotai/kimi-k2-instruct-0905",
-                    ],
-                },
-            },
-        },
-        "browser": {
-            "label": "Browser Automation (/browse)",
-            "models": {
-                "google_api_key": {
-                    "provider": "GoogleGenAIClient",
-                    "items": [
-                        "gemini-2.5-flash",
-                        "gemini-1.5-flash",
-                        "gemini-flash-latest",
-                    ],
-                },
-                "openrouter_api_key": {
-                    "provider": "OpenRouterClient",
-                    "items": [
-                        "openai/gpt-oss-120b:free",
-                    ],
-                },
-            },
-        },
-    }
-
-    def _resolve_provider_for_model(
-        self, task_name: str, model_name: str
-    ) -> str | None:
-        task_info = self._TASK_MODEL_OPTIONS.get(task_name)
-        if not task_info:
-            return None
-        for _key_field, group in task_info["models"].items():
-            if model_name in group["items"]:
-                return group["provider"]
-        return None
-
-    def _find_client_for_provider(self, provider_class_name: str):
-        for client in self.fallback_clients:
-            if type(client).__name__ == provider_class_name:
-                return client
-        router = getattr(self.decision_engine, "router_client", None)
-        if router and type(router).__name__ == provider_class_name:
-            return router
-        return None
-
     async def _settings_model(self, args: str) -> bool:
         parts = args.split(" ", 1) if args else [""]
         task_name = parts[0].lower()
         model_name = parts[1].strip() if len(parts) > 1 else ""
 
-        valid_tasks = list(self._TASK_MODEL_OPTIONS.keys())
+        valid_tasks = list(TASK_MODEL_OPTIONS.keys())
 
         if not task_name:
             task_labels = [
-                f"{t}  ({self._TASK_MODEL_OPTIONS[t]['label']})" for t in valid_tasks
+                f"{t}  ({TASK_MODEL_OPTIONS[t]['label']})" for t in valid_tasks
             ]
             selected = await self._interactive_select(task_labels)
             if not selected:
@@ -590,7 +504,7 @@ class NexusApp:
 
             config = ConfigManager().config
 
-            task_info = self._TASK_MODEL_OPTIONS[task_name]
+            task_info = TASK_MODEL_OPTIONS[task_name]
             options = []
             for key_field, group in task_info["models"].items():
                 if getattr(config, key_field, None):
@@ -621,7 +535,7 @@ class NexusApp:
                 return False
             model_name = selected.split("  (")[0].strip()
 
-        target_provider = self._resolve_provider_for_model(task_name, model_name)
+        target_provider = resolve_provider_for_model(task_name, model_name)
 
         old_target = self._get_task_target(task_name)
         old_model = getattr(old_target, "model", "unknown") if old_target else "unknown"
@@ -630,7 +544,11 @@ class NexusApp:
         new_client = old_target
         provider_switched = False
         if target_provider and old_provider != target_provider:
-            candidate = self._find_client_for_provider(target_provider)
+            candidate = find_client_for_provider(
+                self.fallback_clients,
+                getattr(self.decision_engine, "router_client", None),
+                target_provider,
+            )
             if candidate:
                 new_client = candidate
                 provider_switched = True
@@ -821,7 +739,9 @@ class NexusApp:
 
                         c.client = Anthropic(api_key=key_value)
                 except Exception as e:
-                    self.console.print(f"[{WARN}]Failed to live-reload client {type(c).__name__}: {e}[/{WARN}]")
+                    self.console.print(
+                        f"[{WARN}]Failed to live-reload client {type(c).__name__}: {e}[/{WARN}]"
+                    )
 
         except Exception as e:
             self.console.print(f"[{ERROR}]Failed to save config:[/{ERROR}] {e}")

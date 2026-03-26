@@ -29,6 +29,11 @@ class NexusConfig:
     dangerous_mode: bool = False  # Allow running without confirmation (not recommended)
     browser_use_api_key: Optional[str] = None
 
+    # Default models (same catalog as /settings model); None = client built-in default
+    chat_model: Optional[str] = None
+    router_model: Optional[str] = None
+    browser_model: Optional[str] = None
+
 
 class ConfigManager:
     def __init__(self):
@@ -110,6 +115,7 @@ class ConfigManager:
                     set_key(str(env_path), env_key, value)
         except Exception as e:
             import logging
+
             logging.warning(f"Failed to update .env file: {e}")
 
     def update(self, **kwargs):
