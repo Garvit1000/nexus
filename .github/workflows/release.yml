@@ -1,0 +1,44 @@
+# Build sdist + wheel, attach to GitHub Release, publish to PyPI (trusted publishing).
+# Tag: git tag v0.1.0 && git push origin v0.1.0
+#
+# PyPI trusted publisher (one-time): https://docs.pypi.org/trusted-publishers/
+#   Create project "nexus-linux-assistant" on PyPI, then add publisher:
+#   Owner: Garvit1000, repo: nexus, workflow: release.yml (environment: leave empty unless you add one below).
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build
+        run: pip install --upgrade pip build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Upload GitHub Release assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          verbose: true
