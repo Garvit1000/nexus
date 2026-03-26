@@ -108,8 +108,9 @@ class ConfigManager:
                 env_key = mapping.get(key)
                 if env_key and value:
                     set_key(str(env_path), env_key, value)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.warning(f"Failed to update .env file: {e}")
 
     def update(self, **kwargs):
         for key, value in kwargs.items():
