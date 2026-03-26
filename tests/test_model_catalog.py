@@ -1,5 +1,8 @@
 """Tests for jarvis.core.model_catalog — shared task/model catalog."""
 
+# These tests avoid importing jarvis.ai.llm_client OpenRouterClient / GroqClient so CI
+# can run with pip install -e ".[dev]" only (no openai / groq optional deps).
+
 from jarvis.core.model_catalog import (
     apply_stored_task_models,
     choices_for_task,
@@ -7,6 +10,14 @@ from jarvis.core.model_catalog import (
     resolve_provider_for_model,
 )
 from jarvis.core.config_manager import NexusConfig
+
+
+def _fake_client(provider_class_name: str, model: str):
+    """Minimal stand-in: apply_stored_task_models only needs type().__name__ and .model."""
+    cls = type(provider_class_name, (), {})
+    inst = cls()
+    inst.model = model
+    return inst
 
 
 def test_key_flags_groq_backs_groq_gpt():
@@ -38,10 +49,8 @@ def test_resolve_provider_for_model():
 
 
 def test_apply_stored_task_models_updates_primary():
-    from jarvis.ai.llm_client import OpenRouterClient, GroqClient
-
-    or1 = OpenRouterClient(api_key="k", model="openai/gpt-oss-120b:free")
-    gq = GroqClient(api_key="k2")
+    or1 = _fake_client("OpenRouterClient", "openai/gpt-oss-120b:free")
+    gq = _fake_client("GroqClient", "moonshotai/kimi-k2-instruct-0905")
     fallbacks = [or1, gq]
     cfg = NexusConfig()
     cfg.chat_model = "moonshotai/kimi-k2-instruct-0905"
@@ -51,9 +60,7 @@ def test_apply_stored_task_models_updates_primary():
 
 
 def test_apply_skips_unknown_model_id():
-    from jarvis.ai.llm_client import OpenRouterClient
-
-    or1 = OpenRouterClient(api_key="k", model="openai/gpt-oss-120b:free")
+    or1 = _fake_client("OpenRouterClient", "openai/gpt-oss-120b:free")
     cfg = NexusConfig()
     cfg.chat_model = "totally/fake-model:xyz"
     llm, _ = apply_stored_task_models(cfg, or1, None, [or1])
@@ -62,9 +69,7 @@ def test_apply_skips_unknown_model_id():
 
 
 def test_shared_llm_router_skips_second_model_when_chat_applied():
-    from jarvis.ai.llm_client import GroqClient
-
-    gq = GroqClient(api_key="k")
+    gq = _fake_client("GroqClient", "moonshotai/kimi-k2-instruct-0905")
     cfg = NexusConfig()
     cfg.chat_model = "moonshotai/kimi-k2-instruct-0905"
     cfg.router_model = "moonshotai/kimi-k2-instruct-0905"
