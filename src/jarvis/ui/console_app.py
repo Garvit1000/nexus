@@ -820,8 +820,8 @@ class NexusApp:
                         from anthropic import Anthropic
 
                         c.client = Anthropic(api_key=key_value)
-                except Exception:
-                    pass
+                except Exception as e:
+                    self.console.print(f"[{WARN}]Failed to live-reload client {type(c).__name__}: {e}[/{WARN}]")
 
         except Exception as e:
             self.console.print(f"[{ERROR}]Failed to save config:[/{ERROR}] {e}")
