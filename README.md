@@ -863,7 +863,7 @@ Contributions are welcome! This project is actively developed.
 
 ## License
 
-[Add your license here]
+[MIT-LICENCE](LICENSE)
 
 ## Author
 
