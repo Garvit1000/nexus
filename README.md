@@ -12,10 +12,11 @@
 - **Intelligent Intent Recognition** - Context-aware decision making (including **DIRECT_EXECUTE** for simple one-shot shell tasks)
 - **Security First** - AST + regex gate before execution: strict `rm -rf /` heuristics, **path allowlists** for `read` / `FILE_READ` / home-scoped `FILE_WRITE` (subtree checks, not string prefixes), **FTP credential / anonymous-FTP** patterns blocked in strict mode, mandatory confirmation for risky/sudo commands
 - **Ephemeral Azure Sandboxing** - User-controlled cloud sandbox for running untrusted or risky commands safely
+- **Runtime settings** - `/settings` in the TUI to inspect models and keys, switch **chat / router / browser** models (same catalog as first-run onboarding), and update API keys with optional `.env` sync
 
 ### Maturity snapshot (March 2026)
 
-Nexus is best described as **production-leaning for a power-user TUI**: the execution stack (planner, executor, security gate, audit log, self-heal loop, LLM fallbacks) is **well tested** (**192** automated `pytest` cases) and hardened from real failure modes (rate limits, bad JSON plans, sudo/interactive edge cases). **Distribution** ships without embedded API keys; users supply keys via onboarding or environment. Remaining risk is mostly **product** surface area: no automatic rollback checkpoints yet, `FILE_WRITE` always **replaces** whole files (no first-class append/patch action), and plans are still sequential. For **AppImage + desktop integration**, the planner encodes a full procedure (extract, icon, `FILE_WRITE` `.desktop`, `update-desktop-database`, Electron `--no-sandbox`); extraction of large images can take many minutes and is supported with an extended subprocess timeout.
+Nexus is best described as **production-leaning for a power-user TUI**: the execution stack (planner, executor, security gate, audit log, self-heal loop, LLM fallbacks) is **well tested** (**198** automated `pytest` cases) and hardened from real failure modes (rate limits, bad JSON plans, sudo/interactive edge cases). **Distribution** ships without embedded API keys; users supply keys via onboarding or environment. Remaining risk is mostly **product** surface area: no automatic rollback checkpoints yet, `FILE_WRITE` always **replaces** whole files (no first-class append/patch action), and plans are still sequential. For **AppImage + desktop integration**, the planner encodes a full procedure (extract, icon, `FILE_WRITE` `.desktop`, `update-desktop-database`, Electron `--no-sandbox`); extraction of large images can take many minutes and is supported with an extended subprocess timeout.
 
 ## Architecture Overview
 
@@ -85,7 +86,7 @@ graph TB
 
 ## AI Model Usage Map
 
-Nexus uses different AI models for different purposes, creating a specialized "multi-brain" system:
+Nexus uses different AI models for different purposes, creating a specialized "multi-brain" system. **Defaults** below are the usual out-of-the-box choices; you can override **chat**, **router**, and **browser** models via [Settings and default models](#settings-and-default-models) (onboarding step 3 or `/settings model`).
 
 | Component | Model Used | Purpose | Why This Model? |
 |-----------|------------|---------|-----------------|
@@ -404,8 +405,10 @@ graph TB
 
 #### `config_manager.py` - Configuration Management
 - Stores API keys, preferences in `~/.config/nexus/config.json` (file mode `0o600` on save)
-- Environment variable overrides
+- Environment variable overrides (on load) for keys such as `OPENROUTER_API_KEY`, `GOOGLE_API_KEY`, etc.
 - Onboarding state tracking
+- **Optional default models** (written by onboarding step 3 or `/settings`): `chat_model`, `router_model`, `browser_model` — see [Settings and default models](#settings-and-default-models)
+- **`update()`** persists to `config.json` and, when a project `.env` file exists, syncs **known** API key fields to matching env vars (same mapping as onboarding/settings key flows)
 
 #### `system_detector.py` - OS Detection
 - Detects: Ubuntu, Debian, Fedora, Arch, etc.
@@ -418,7 +421,7 @@ graph TB
 - **Local Mode**: `browser-use` library with Playwright (headless=false for live view)
 - **Cloud Mode**: BrowserUse SDK for headless execution
 - Smart download handling (~/Downloads tracking)
-- Uses Gemini Flash for vision-based UI understanding
+- **LLM**: Gemini (default `gemini-2.5-flash`) or OpenRouter (`openai/gpt-oss-120b:free`) depending on keys; optional `browser_model` from config when it matches the active provider (see [Settings and default models](#settings-and-default-models))
 
 #### `package_manager.py` - System Package Management
 - Unified interface for apt/dnf/pacman
@@ -431,10 +434,16 @@ graph TB
 - **Rich Console**: Panels, tables, markdown rendering
 - **Prompt Toolkit**: Async input with syntax highlighting
 - **Persistent Session** (`~/.nexus/session.json`): Context-aware responses that survive restarts; last 24h of history restored on launch
-- **Command Handlers**: `/browse`, `/search`, etc.
+- **Command Handlers**: `/browse`, `/search`, `/find`, `/read`, `/do`, package commands, **`/settings`** (show, `help`, `model`, `key`), `/status`, `/think`, etc.
+
+#### `model_catalog.py` — Shared task ↔ model catalog
+- **Single source of truth** for which model IDs are valid per task (**chat**, **router**, **browser**) and which Nexus config key unlocks each provider
+- Used by **onboarding** (default model picks), **`/settings model`**, and **startup** when applying saved `chat_model` / `router_model`
 
 #### `onboarding.py` - First-Run Setup
 - Collects API keys (Google, OpenRouter, Groq, optional Anthropic)
+- Optional **Supermemory** enablement (BYOK)
+- **Step 3 — Default models**: numbered menus built from the same catalog as `/settings model` (per task, only for providers you configured in step 1); choosing “built-in default” leaves the corresponding `*_model` field unset
 - Saves to `~/.config/nexus/config.json` (no keys are bundled with the app)
 
 ### Onboarding & Supermemory (BYOK)
@@ -512,6 +521,28 @@ nexus
 ```
 Launches the full Terminal UI with decision engine, memory, and all features.
 
+### Settings and default models
+
+Nexus keeps **one catalog** of allowed models per task (`src/jarvis/core/model_catalog.py`). **Onboarding step 3** and the TUI command **`/settings model`** both draw from it, so first-run choices stay consistent with what you can change later in the app.
+
+| Mechanism | What it does |
+|-----------|----------------|
+| **`/settings`** | Summary panel: active models (chat, router, browser, search), fallbacks, memory, executor mode, route-cache stats when available |
+| **`/settings help`** | Subcommands, examples, and provider aliases |
+| **`/settings model`** | Interactive picker (arrow keys) or direct form: `/settings model chat <model_id>` — may switch which **provider instance** is primary when the model belongs to another client in the failover chain |
+| **`/settings key`** | Update a key: interactive list from `.env` keys (if present) or `provider value` — updates `config.json`, syncs mapped vars to `.env` when the file exists, and refreshes in-memory SDK clients where supported |
+
+**Persisted fields** in `~/.config/nexus/config.json`:
+
+- `chat_model`, `router_model`, `browser_model` — optional strings; unset means “use each client’s built-in default”
+- On **startup**, `main.py` applies `chat_model` / `router_model` via the same rules as `/settings model`. **Browser** uses `browser_model` only when it matches the active browser provider (Google vs OpenRouter); otherwise the safe default for that SDK is used.
+
+**Edge cases (by design):**
+
+- **Unknown model IDs** in config (typos or manual edits) are **ignored** at startup so the wrong provider is not given another provider’s model string.
+- If **router** and **primary chat** are the **same client instance** (e.g. Groq-only setups), applying **both** `chat_model` and `router_model` would fight over one `.model`; after `chat_model` is applied, **`router_model` is skipped** on that shared instance so the chat choice wins.
+- Model env vars are **not** read for `chat_model` / `router_model` / `browser_model` — only `config.json` (and what onboarding/settings write there).
+
 ### CLI Commands
 
 #### Chat
@@ -544,7 +575,7 @@ nexus search "best restaurants in Dubai"
 
 ## Testing
 
-Nexus ships with **192 automated pytest tests** across 10+ test files, covering every critical code path. Run them anytime:
+Nexus ships with **198 automated pytest tests** across 10+ test files, covering every critical code path. Run them anytime:
 
 ```bash
 # Install dev dependencies (first time only)
@@ -635,6 +666,9 @@ pytest tests/test_executor.py -v
 
 #### `tests/test_config_manager.py` — 13 tests
 **What it checks:** Config persistence, environment variable overrides, corrupted file recovery, and file permissions.
+
+#### `tests/test_model_catalog.py` — 6 tests
+**What it checks:** Shared onboarding/settings catalog (`key_flags_from_onboarding`, `choices_for_task`, `resolve_provider_for_model`), `apply_stored_task_models` (primary brain switch, unknown model skipped, shared chat/router client behavior).
 
 #### `tests/test_session_manager.py` — 29 tests
 **What it checks:** Turn tracking, history trimming, context reference detection (pronouns, temporal markers), semantic relatedness filtering to prevent false-positive cache hits, and session summary generation.
@@ -738,6 +772,7 @@ nexus/
 │   │   ├── session_manager.py   # In-memory session state
 │   │   ├── persistent_session_manager.py  # Disk-persisted sessions
 │   │   ├── config_manager.py    # API keys + preferences (chmod 600)
+│   │   ├── model_catalog.py    # Task ↔ model catalog; apply saved defaults at startup
 │   │   ├── api_key_rotator.py   # Google API key rotation
 │   │   ├── system_detector.py
 │   │   └── security.py          # AST validation + pattern blacklist
@@ -750,7 +785,7 @@ nexus/
 │   ├── utils/
 │   │   └── syntax_output.py     # Rich syntax highlighting for file reads
 │   └── main.py                  # CLI entry point (Typer)
-├── tests/                       # 192+ pytest tests
+├── tests/                       # 198+ pytest tests
 ├── docs/
 │   ├── FUTURE_SCOPE.md          # Roadmap + shipped features
 │   ├── architecture_overview.md # Architecture deep-dive with Mermaid diagrams
@@ -778,7 +813,7 @@ nexus/
 See [docs/FUTURE_SCOPE.md](docs/FUTURE_SCOPE.md) for the full roadmap.
 
 **Shipped:**
-Multi-brain AI architecture, Supermemory RAG (**BYOK** onboarding + env), browser automation with key rotation, self-healing execution (improved missing-path heuristics, shared `FILE_WRITE` helpers), exponential backoff (planner) + **command-generator retries/fallbacks** (memory recorded on the **succeeding** LLM client), SERVICE_MGT, **DIRECT_EXECUTE**, planner system-ops knowledge (AppImage w/ `mktemp` extract, deb, rpm, desktop entries), path allowlists for read/write, **FTP strict checks**, persistent sessions, audit logging, secure sudo, shell injection hardening, **192-test** suite, CI with linting and security scanning.
+Multi-brain AI architecture, Supermemory RAG (**BYOK** onboarding + env), browser automation with key rotation, self-healing execution (improved missing-path heuristics, shared `FILE_WRITE` helpers), exponential backoff (planner) + **command-generator retries/fallbacks** (memory recorded on the **succeeding** LLM client), SERVICE_MGT, **DIRECT_EXECUTE**, **`/settings`** + onboarding **default models** (shared `model_catalog`), planner system-ops knowledge (AppImage w/ `mktemp` extract, deb, rpm, desktop entries), path allowlists for read/write, **FTP strict checks**, persistent sessions, audit logging, secure sudo, shell injection hardening, **198-test** suite, CI with linting and security scanning.
 
 **Up next:**
 Rollback checkpoints, dynamic slash command registry, **FILE_APPEND / FILE_PATCH**, LLM rate limiting & budgets, context window management, parallel step execution.

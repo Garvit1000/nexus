@@ -14,6 +14,7 @@ from .utils.syntax_output import (
 load_dotenv()
 
 from .core.config_manager import ConfigManager
+from .core.model_catalog import apply_stored_task_models, resolve_provider_for_model
 from .core.system_detector import SystemDetector
 from .core.executor import CommandExecutor
 from .core.security import SafetyCheck
@@ -171,21 +172,37 @@ if not llm_client:
 if llm_client is None:
     llm_client = MockLLMClient()
 
+llm_client, router_client = apply_stored_task_models(
+    config_mgr.config, llm_client, router_client, fallback_clients
+)
+
 # Setup Browser Manager (Local)
 browser_manager = None
 if BrowserManager is not None:
     try:
+        _bm = config_mgr.config.browser_model
         if api_key:
+            google_bm = _bm or "gemini-2.5-flash"
+            if (
+                _bm
+                and resolve_provider_for_model("browser", _bm) != "GoogleGenAIClient"
+            ):
+                google_bm = "gemini-2.5-flash"
             browser_manager = BrowserManager(
                 api_key=google_key_rotator if google_key_rotator else api_key,
                 openrouter_key=openrouter_key,
                 provider="google",
+                google_browser_model=google_bm,
             )
         elif openrouter_key:
+            or_bm = _bm or "openai/gpt-oss-120b:free"
+            if _bm and resolve_provider_for_model("browser", _bm) != "OpenRouterClient":
+                or_bm = "openai/gpt-oss-120b:free"
             browser_manager = BrowserManager(
                 api_key=openrouter_key,
                 openrouter_key=openrouter_key,
                 provider="openrouter",
+                openrouter_browser_model=or_bm,
             )
     except Exception:
         browser_manager = None

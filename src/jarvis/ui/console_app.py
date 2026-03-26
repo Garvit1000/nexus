@@ -28,6 +28,11 @@ if TYPE_CHECKING:
     from ..ai.decision_engine import Intent
 
 from ..ai.decision_engine import DecisionEngine, Intent
+from ..core.model_catalog import (
+    TASK_MODEL_OPTIONS,
+    find_client_for_provider,
+    resolve_provider_for_model,
+)
 
 
 # ── Colour palette ────────────────────────────────────────────────────────────
@@ -185,6 +190,9 @@ class NexusApp:
             self._show_status()
             return True
 
+        if command == "/settings":
+            return await self._cmd_settings(args)
+
         if command == "/find":
             return await self._cmd_find(args)
 
@@ -211,6 +219,10 @@ class NexusApp:
             ("  /update", "Update all system packages"),
             ("  /think", "Toggle the Thinking block on/off"),
             ("  /status", "Show active AI provider and mode"),
+            ("  /settings", "Show current config (models, keys, status)"),
+            ("  /settings help", "Detailed settings usage guide"),
+            ("  /settings model", "Switch model per task (chat/router/browser)"),
+            ("  /settings key", "Add or update an API key"),
             ("  /help", "Show this help"),
             ("  /exit", "Quit Nexus"),
         ]
@@ -237,6 +249,514 @@ class NexusApp:
         self.console.print(
             Panel(lines, title="Status", border_style=ACCENT, padding=(0, 2))
         )
+
+    # ── Settings command ──────────────────────────────────────────────────
+
+    async def _cmd_settings(self, args: str) -> bool:
+        """Handle /settings subcommands: show, model, key, help."""
+        parts = args.split(" ", 1) if args else [""]
+        subcmd = parts[0].lower()
+        subargs = parts[1].strip() if len(parts) > 1 else ""
+
+        if subcmd == "show" or subcmd == "":
+            return self._settings_show()
+        elif subcmd == "help":
+            return self._settings_help()
+        elif subcmd == "model":
+            return await self._settings_model(subargs)
+        elif subcmd == "key":
+            return await self._settings_key(subargs)
+        else:
+            self.console.print(
+                f"[{WARN}]Unknown settings subcommand: {subcmd}[/{WARN}]\n"
+                f"[{DIM}]Usage: /settings | /settings help | /settings model | /settings key[/{DIM}]"
+            )
+            return False
+
+    def _settings_show(self) -> bool:
+        """Display current configuration with per-task model breakdown."""
+        chat_provider = type(self.llm_client).__name__ if self.llm_client else "None"
+        chat_model = (
+            getattr(self.llm_client, "model", "N/A") if self.llm_client else "N/A"
+        )
+
+        router_client = getattr(self.decision_engine, "router_client", None)
+        router_provider = type(router_client).__name__ if router_client else "None"
+        router_model = (
+            getattr(router_client, "model", "N/A") if router_client else "N/A"
+        )
+
+        browser_status = "Not configured"
+        browser_model = "N/A"
+        if self.browser_manager:
+            browser_status = "Ready"
+            browser_llm = getattr(self.browser_manager, "llm", None)
+            if browser_llm:
+                browser_model = getattr(browser_llm, "model", None) or getattr(
+                    browser_llm, "model_name", "unknown"
+                )
+
+        browser_style = SUCCESS if self.browser_manager else WARN
+
+        from ..ai.llm_client import GoogleGenAIClient
+
+        search_model = "N/A (needs GOOGLE_API_KEY)"
+        candidates = [self.llm_client] + self.fallback_clients
+        for c in candidates:
+            if isinstance(c, GoogleGenAIClient):
+                search_model = "gemini-2.5-flash → gemini-1.5-flash"
+                break
+
+        fallback_names = (
+            [type(c).__name__ for c in self.fallback_clients]
+            if self.fallback_clients
+            else ["None"]
+        )
+
+        has_memory = (
+            (
+                hasattr(self.llm_client, "memory_client")
+                and self.llm_client.memory_client
+            )
+            if self.llm_client
+            else False
+        )
+        memory_status = "Active" if has_memory else "Disabled"
+        memory_style = SUCCESS if has_memory else DIM
+
+        executor_mode = (
+            "Dry-run"
+            if (self.executor and getattr(self.executor, "dry_run", False))
+            else "Live"
+        )
+
+        cache_stats = ""
+        if hasattr(self.decision_engine, "get_cache_stats"):
+            stats = self.decision_engine.get_cache_stats()
+            cache_stats = (
+                f"hits={stats.get('hits', 0)}, misses={stats.get('misses', 0)}, "
+                f"size={stats.get('size', 0)}"
+            )
+
+        lines = (
+            f"[bold {ACCENT}]Task Assignments:[/bold {ACCENT}]\n"
+            f"[{DIM}]  Chat       :[/{DIM}]  [cyan]{chat_model}[/cyan]  [{DIM}]({chat_provider})[/{DIM}]\n"
+            f"[{DIM}]  Router     :[/{DIM}]  [cyan]{router_model}[/cyan]  [{DIM}]({router_provider})[/{DIM}]\n"
+            f"[{DIM}]  Browser    :[/{DIM}]  [cyan]{browser_model}[/cyan]  [{browser_style}]{browser_status}[/{browser_style}]\n"
+            f"[{DIM}]  Search     :[/{DIM}]  [cyan]{search_model}[/cyan]\n"
+            f"[{DIM}]  Planning   :[/{DIM}]  [{DIM}]Uses Chat model + fallbacks[/{DIM}]\n"
+            f"[{DIM}]  /do        :[/{DIM}]  [{DIM}]Uses Chat model[/{DIM}]\n"
+            f"\n[bold {ACCENT}]System:[/bold {ACCENT}]\n"
+            f"[{DIM}]  Fallbacks  :[/{DIM}]  [{DIM}]{' → '.join(fallback_names)}[/{DIM}]\n"
+            f"[{DIM}]  Memory     :[/{DIM}]  [{memory_style}]{memory_status}[/{memory_style}]\n"
+            f"[{DIM}]  Executor   :[/{DIM}]  [cyan]{executor_mode}[/cyan]"
+        )
+        if cache_stats:
+            lines += f"\n[{DIM}]  Route Cache:[/{DIM}]  [{DIM}]{cache_stats}[/{DIM}]"
+
+        self.console.print(
+            Panel(lines, title="⚙ Settings", border_style=ACCENT, padding=(1, 2))
+        )
+        self.console.print(
+            f"[{DIM}]Tip: /settings model [task] to switch model per task, "
+            f"/settings key to update a key, "
+            f"/settings help for full guide[/{DIM}]"
+        )
+        return True
+
+    def _settings_help(self) -> bool:
+        """Display comprehensive /settings usage guide."""
+        chat_model = (
+            getattr(self.llm_client, "model", "N/A") if self.llm_client else "N/A"
+        )
+        router_client = getattr(self.decision_engine, "router_client", None)
+        router_model = (
+            getattr(router_client, "model", "N/A") if router_client else "N/A"
+        )
+        browser_llm = (
+            getattr(self.browser_manager, "llm", None) if self.browser_manager else None
+        )
+        browser_model = "N/A"
+        if browser_llm:
+            browser_model = getattr(browser_llm, "model", None) or getattr(
+                browser_llm, "model_name", "unknown"
+            )
+
+        guide = (
+            f"[bold {ACCENT}]Subcommands:[/bold {ACCENT}]\n"
+            f"  [cyan]/settings[/cyan]              Show current config\n"
+            f"  [cyan]/settings help[/cyan]         This guide\n"
+            f"  [cyan]/settings model[/cyan]        Switch model (interactive)\n"
+            f"  [cyan]/settings model chat[/cyan]   Switch chat/planning model\n"
+            f"  [cyan]/settings model router[/cyan] Switch router/decision model\n"
+            f"  [cyan]/settings model browser[/cyan] Switch browser automation model\n"
+            f"  [cyan]/settings key[/cyan]          Update API key (interactive)\n"
+            f"  [cyan]/settings key google <key>[/cyan]\n"
+            f"\n"
+            f"[bold {ACCENT}]Current Models by Task:[/bold {ACCENT}]\n"
+            f"  [cyan]Chat[/cyan]     {chat_model}  [{DIM}]Powers: chat, /do, planning[/{DIM}]\n"
+            f"  [cyan]Router[/cyan]   {router_model}  [{DIM}]Powers: intent routing[/{DIM}]\n"
+            f"  [cyan]Browser[/cyan]  {browser_model}  [{DIM}]Powers: /browse[/{DIM}]\n"
+            f"  [cyan]Search[/cyan]   gemini-2.5-flash  [{DIM}]Powers: /search (hardcoded)[/{DIM}]\n"
+            f"\n"
+            f"[bold {ACCENT}]Chat Fallback Chain:[/bold {ACCENT}]\n"
+            f"  [{DIM}]OpenRouter → Anthropic → GroqGPT → Groq Kimi → Google Gemini → Mock[/{DIM}]\n"
+            f"\n"
+            f"[bold {ACCENT}]API Key Providers:[/bold {ACCENT}]\n"
+            f"  [{DIM}]google, openrouter, groq, groq_gpt, anthropic, supermemory, browser[/{DIM}]\n"
+            f"\n"
+            f"[bold {ACCENT}]Examples:[/bold {ACCENT}]\n"
+            f"  [cyan]/settings model chat openai/gpt-oss-120b:free[/cyan]\n"
+            f"  [cyan]/settings model router moonshotai/kimi-k2-instruct-0905[/cyan]\n"
+            f"  [cyan]/settings key openrouter sk-or-v1-...[/cyan]"
+        )
+        self.console.print(
+            Panel(guide, title="⚙ Settings Help", border_style=ACCENT, padding=(1, 2))
+        )
+        return True
+
+    async def _interactive_select(self, options: list[str]) -> Optional[str]:
+        if not options:
+            return None
+
+        from prompt_toolkit.application import Application
+        from prompt_toolkit.key_binding import KeyBindings
+        from prompt_toolkit.layout.containers import Window
+        from prompt_toolkit.layout.controls import FormattedTextControl
+        from prompt_toolkit.layout.layout import Layout
+        from prompt_toolkit.styles import Style
+
+        index = [0]
+        kb = KeyBindings()
+
+        @kb.add("up")
+        def _(event):
+            index[0] = max(0, index[0] - 1)
+
+        @kb.add("down")
+        def _(event):
+            index[0] = min(len(options) - 1, index[0] + 1)
+
+        @kb.add("enter")
+        def _(event):
+            event.app.exit(result=options[index[0]])
+
+        @kb.add("c-c")
+        def _(event):
+            event.app.exit(result=None)
+
+        def get_text():
+            result = [
+                (
+                    "class:title",
+                    "◆ Select a model (↑/↓ to navigate, Enter to select):\n",
+                )
+            ]
+            for i, opt in enumerate(options):
+                if i == index[0]:
+                    result.append(("class:selected", f"  ● {opt}\n"))
+                else:
+                    result.append(("", f"  ○ {opt}\n"))
+            return result
+
+        control = FormattedTextControl(get_text)
+        window = Window(content=control, height=len(options) + 1)
+        layout = Layout(window)
+
+        style = Style(
+            [
+                ("title", "#00d7ff bold"),
+                ("selected", "#00d7ff bold"),
+            ]
+        )
+
+        app = Application(
+            layout=layout, key_bindings=kb, style=style, mouse_support=True
+        )
+        return await app.run_async()
+
+    async def _settings_model(self, args: str) -> bool:
+        parts = args.split(" ", 1) if args else [""]
+        task_name = parts[0].lower()
+        model_name = parts[1].strip() if len(parts) > 1 else ""
+
+        valid_tasks = list(TASK_MODEL_OPTIONS.keys())
+
+        if not task_name:
+            task_labels = [
+                f"{t}  ({TASK_MODEL_OPTIONS[t]['label']})" for t in valid_tasks
+            ]
+            selected = await self._interactive_select(task_labels)
+            if not selected:
+                self.console.print(f"[{DIM}]Model selection cancelled.[/{DIM}]")
+                return False
+            task_name = selected.split(" ")[0].strip()
+
+        if task_name not in valid_tasks:
+            self.console.print(
+                f"[{WARN}]Unknown task: {task_name}[/{WARN}]\n"
+                f"[{DIM}]Available tasks: {', '.join(valid_tasks)}[/{DIM}]"
+            )
+            return False
+
+        if not model_name:
+            from ..core.config_manager import ConfigManager
+
+            config = ConfigManager().config
+
+            task_info = TASK_MODEL_OPTIONS[task_name]
+            options = []
+            for key_field, group in task_info["models"].items():
+                if getattr(config, key_field, None):
+                    for m in group["items"]:
+                        provider_tag = group["provider"].replace("Client", "")
+                        options.append(f"{m}  ({provider_tag})")
+
+            if not options:
+                self.console.print(
+                    f"[{WARN}]No API keys configured for {task_name} models. "
+                    f"Set an API key first with /settings key[/{WARN}]"
+                )
+                return False
+
+            target = self._get_task_target(task_name)
+            current = getattr(target, "model", None) if target else None
+            if current:
+                for i, opt in enumerate(options):
+                    bare_model = opt.split("  (")[0]
+                    if bare_model == current:
+                        options[i] = f"{opt}  ◄ current"
+                        options.insert(0, options.pop(i))
+                        break
+
+            selected = await self._interactive_select(options)
+            if not selected:
+                self.console.print(f"[{DIM}]Model selection cancelled.[/{DIM}]")
+                return False
+            model_name = selected.split("  (")[0].strip()
+
+        target_provider = resolve_provider_for_model(task_name, model_name)
+
+        old_target = self._get_task_target(task_name)
+        old_model = getattr(old_target, "model", "unknown") if old_target else "unknown"
+        old_provider = type(old_target).__name__ if old_target else "None"
+
+        new_client = old_target
+        provider_switched = False
+        if target_provider and old_provider != target_provider:
+            candidate = find_client_for_provider(
+                self.fallback_clients,
+                getattr(self.decision_engine, "router_client", None),
+                target_provider,
+            )
+            if candidate:
+                new_client = candidate
+                provider_switched = True
+            else:
+                self.console.print(
+                    f"[{WARN}]No {target_provider} instance available in fallback chain. "
+                    f"Model set on current provider ({old_provider}).[/{WARN}]"
+                )
+
+        if not new_client:
+            self.console.print(
+                f"[{ERROR}]No provider configured for {task_name}.[/{ERROR}]"
+            )
+            return False
+
+        new_client.model = model_name
+        self._set_task_target(task_name, new_client)
+
+        new_provider = type(new_client).__name__
+        switch_info = f"  [cyan]({new_provider})[/cyan]" if provider_switched else ""
+        self.console.print(
+            f"[{SUCCESS}]✓[/{SUCCESS}] [{DIM}]{task_name}[/{DIM}] model switched: "
+            f"[{DIM}]{old_model}[/{DIM}] → [cyan]{model_name}[/cyan]{switch_info}"
+        )
+        return True
+
+    def _get_task_target(self, task_name: str):
+        if task_name == "chat":
+            return self.llm_client
+        if task_name == "router":
+            return getattr(self.decision_engine, "router_client", None)
+        if task_name == "browser":
+            if self.browser_manager:
+                return getattr(self.browser_manager, "llm", None)
+            return None
+        return None
+
+    def _set_task_target(self, task_name: str, client) -> None:
+        if task_name == "chat":
+            self.llm_client = client
+            if self.orchestrator:
+                self.orchestrator.llm_client = client
+            if self.decision_engine:
+                self.decision_engine.llm_client = client
+        elif task_name == "router":
+            if self.decision_engine:
+                self.decision_engine.router_client = client
+        elif task_name == "browser":
+            if self.browser_manager:
+                self.browser_manager.llm = client
+
+    async def _settings_key(self, args: str) -> bool:
+        SUPPORTED_PROVIDERS = {
+            "google": "google_api_key",
+            "openrouter": "openrouter_api_key",
+            "groq": "groq_api_key",
+            "groq_gpt": "groq_gpt_api_key",
+            "anthropic": "anthropic_api_key",
+            "supermemory": "supermemory_api_key",
+            "browser": "browser_use_api_key",
+            "google_api_key": "google_api_key",
+            "openrouter_api_key": "openrouter_api_key",
+            "groq_api_key": "groq_api_key",
+            "groq_gpt_api_key": "groq_gpt_api_key",
+            "anthropic_api_key": "anthropic_api_key",
+            "supermemory_api_key": "supermemory_api_key",
+            "browser_use_api_key": "browser_use_api_key",
+            "sarvam_api_key": "sarvam_api_key",
+            "groq_api": "groq_api_key",
+        }
+
+        FIELD_TO_ALIAS = {
+            "google_api_key": "google",
+            "openrouter_api_key": "openrouter",
+            "groq_api_key": "groq",
+            "groq_gpt_api_key": "groq_gpt",
+            "anthropic_api_key": "anthropic",
+            "supermemory_api_key": "supermemory",
+            "browser_use_api_key": "browser",
+        }
+
+        parts = args.split(" ", 1) if args else [""]
+        provider = parts[0].strip()
+        key_value = parts[1].strip() if len(parts) > 1 else ""
+
+        if not provider or not key_value:
+            from dotenv import dotenv_values
+            from pathlib import Path
+
+            env_path = Path(".env").resolve()
+            env_keys = []
+            if env_path.exists():
+                env_keys = list(dotenv_values(env_path).keys())
+
+            ADD_NEW_KEY_OPTION = "➕ Add a new key"
+            options = env_keys + [ADD_NEW_KEY_OPTION]
+
+            selected = await self._interactive_select(options)
+            if not selected:
+                self.console.print(f"[{DIM}]Key selection cancelled.[/{DIM}]")
+                return False
+
+            if selected == ADD_NEW_KEY_OPTION:
+                new_key_name = await self.session.prompt_async(
+                    HTML(
+                        "<b><style color='#00d7ff'>Provider/Key Name (e.g. GROQ_API_KEY):</style></b> "
+                    )
+                )
+                if not new_key_name or not new_key_name.strip():
+                    self.console.print(f"[{DIM}]Cancelled.[/{DIM}]")
+                    return False
+                provider = new_key_name.strip()
+            else:
+                provider = selected
+
+            new_key_value = await self.session.prompt_async(
+                HTML(
+                    f"<b><style color='#00d7ff'>New value for {provider}:</style></b> "
+                )
+            )
+            if not new_key_value or not new_key_value.strip():
+                self.console.print(f"[{DIM}]Cancelled.[/{DIM}]")
+                return False
+            key_value = new_key_value.strip()
+
+        try:
+            from ..core.config_manager import ConfigManager
+
+            config_mgr = ConfigManager()
+
+            provider_lower = provider.lower()
+
+            if provider_lower in SUPPORTED_PROVIDERS:
+                config_field = SUPPORTED_PROVIDERS[provider_lower]
+                config_mgr.update(**{config_field: key_value})
+                target_alias = FIELD_TO_ALIAS.get(config_field, provider_lower)
+                display_name = provider
+            else:
+                from dotenv import set_key
+                from pathlib import Path
+
+                env_path = Path(".env").resolve()
+                env_key = provider.upper()
+                if env_path.exists():
+                    set_key(str(env_path), env_key, key_value)
+                display_name = env_key
+                target_alias = provider_lower
+
+            from ..ai.llm_client import (
+                AnthropicClient,
+                GoogleGenAIClient,
+                GroqClient,
+                GroqGPTClient,
+                OpenRouterClient,
+            )
+
+            for c in [self.llm_client] + self.fallback_clients:
+                if not c:
+                    continue
+                try:
+                    if target_alias == "google" and isinstance(c, GoogleGenAIClient):
+                        from google import genai
+
+                        c.client = genai.Client(api_key=key_value)
+                    elif target_alias == "openrouter" and isinstance(
+                        c, OpenRouterClient
+                    ):
+                        from openai import OpenAI
+
+                        c.client = OpenAI(
+                            base_url="https://openrouter.ai/api/v1",
+                            api_key=key_value,
+                            default_headers={
+                                "HTTP-Referer": "https://github.com/Garvit1000/nexus",
+                                "X-Title": "Nexus Agent",
+                            },
+                        )
+                    elif target_alias == "groq" and isinstance(c, GroqClient):
+                        from groq import Groq
+
+                        c.client = Groq(api_key=key_value)
+                    elif target_alias == "groq_gpt" and isinstance(c, GroqGPTClient):
+                        from groq import Groq
+
+                        c.client = Groq(api_key=key_value)
+                    elif target_alias == "anthropic" and isinstance(c, AnthropicClient):
+                        from anthropic import Anthropic
+
+                        c.client = Anthropic(api_key=key_value)
+                except Exception as e:
+                    self.console.print(
+                        f"[{WARN}]Failed to live-reload client {type(c).__name__}: {e}[/{WARN}]"
+                    )
+
+        except Exception as e:
+            self.console.print(f"[{ERROR}]Failed to save config:[/{ERROR}] {e}")
+            return False
+
+        if len(key_value) > 10:
+            masked = key_value[:5] + "•" * (len(key_value) - 8) + key_value[-3:]
+        else:
+            masked = "•" * len(key_value)
+
+        self.console.print(
+            f"[{SUCCESS}]✓[/{SUCCESS}] API key for [cyan]{display_name}[/cyan] updated, saved, and loaded live!\n"
+            f"[{DIM}]Key: {masked}[/{DIM}]"
+        )
+        return True
 
     async def _cmd_browse(self, args: str) -> bool:
         if not args:

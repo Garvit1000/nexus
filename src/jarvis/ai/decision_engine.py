@@ -321,7 +321,7 @@ class DecisionEngine:
             prompt = f"""Nexus intent router. Classify the user's request into one action.
 {memory_context}{session_context}
 ACTIONS:
-- COMMAND: single-step package management (install/remove/update). Use "command":"/install docker"
+- COMMAND: single-step internal TUI commands (/install /remove /update /search /settings). Use "command":"..."
 - DIRECT_EXECUTE: simple filesystem/system operations that need ONE shell command (chmod, mkdir, cp, mv, tar, ls, df, free, etc.)
 - PLAN: multi-step tasks, web data, complex file ops, app setup (AppImage/deb/rpm), anything requiring 2+ steps
 - SEARCH: factual questions that need the live web — current events, news, sports results/scores, elections, stock/crypto prices, "who won", "latest", "today", "this year", recent dates, or any fact that changes over time. Static trivia ("capital of France") can be SEARCH or CHAT; prefer SEARCH when recency matters.
