@@ -271,7 +271,9 @@ class NexusApp:
                 return c
         return None
 
-    async def _grounded_web_search(self, query: str) -> tuple[Optional[str], Optional[str]]:
+    async def _grounded_web_search(
+        self, query: str
+    ) -> tuple[Optional[str], Optional[str]]:
         """
         Run Gemini + Google Search grounding for ``query``.
 
