@@ -104,8 +104,8 @@ class DecisionEngine:
         Store the actual LLM response for a query so subsequent identical
         queries return SHOW_CACHED instead of re-calling the LLM.
 
-        Call this from the UI layer after a successful CHAT response.
-        Only stores responses for CHAT actions (not PLAN/COMMAND outputs).
+        Call this from the UI layer after a successful CHAT or SEARCH response.
+        Do not use for PLAN/COMMAND outputs.
         """
         if not response_text or not response_text.strip():
             return
@@ -324,16 +324,16 @@ ACTIONS:
 - COMMAND: single-step package management (install/remove/update). Use "command":"/install docker"
 - DIRECT_EXECUTE: simple filesystem/system operations that need ONE shell command (chmod, mkdir, cp, mv, tar, ls, df, free, etc.)
 - PLAN: multi-step tasks, web data, complex file ops, app setup (AppImage/deb/rpm), anything requiring 2+ steps
-- SEARCH: simple fact lookup ("who is CEO of Google?")
-- CHAT: greeting, opinion, explanation ONLY
+- SEARCH: factual questions that need the live web — current events, news, sports results/scores, elections, stock/crypto prices, "who won", "latest", "today", "this year", recent dates, or any fact that changes over time. Static trivia ("capital of France") can be SEARCH or CHAT; prefer SEARCH when recency matters.
+- CHAT: greeting, opinion, creative writing, conceptual explanations that do not require up-to-the-minute facts
 - CLARIFY: if intent is very ambiguous (confidence<0.70), provide clarification_options
 
 RULES:
 - "install X" (package name) → COMMAND. "install /path/to/file.deb" → PLAN (needs dpkg).
 - Simple single-command ops (chmod, mkdir, cp, mv, extract, system info) → DIRECT_EXECUTE
 - "setup/configure AppImage/deb" → PLAN (multi-step with desktop entry, icons, etc.)
-- "show me/get/fetch/find/check/download X" → PLAN. When in doubt → PLAN.
-- Pure questions with no action needed → CHAT.
+- "show me/get/fetch/find/check/download X" (files, apps, system) → PLAN. When in doubt → PLAN.
+- Time-sensitive or "current state of the world" questions → SEARCH (not CHAT).
 
 INPUT: "{text}"
 
@@ -342,6 +342,7 @@ EXAMPLES:
 "show me HN posts" → {{"action":"PLAN","confidence":0.95,"reasoning":"web data retrieval"}}
 "what is docker?" → {{"action":"CHAT","confidence":0.90,"reasoning":"informational"}}
 "who is CEO of Google?" → {{"action":"SEARCH","confidence":0.95,"reasoning":"fact lookup"}}
+"who won the men's T20 World Cup 2026?" → {{"action":"SEARCH","confidence":0.98,"reasoning":"current sports result needs web"}}
 "find my bashrc" → {{"action":"PLAN","confidence":0.95,"reasoning":"file search task"}}
 "make file.sh executable" → {{"action":"DIRECT_EXECUTE","confidence":0.95,"reasoning":"single chmod command"}}
 "show disk usage" → {{"action":"DIRECT_EXECUTE","confidence":0.95,"reasoning":"single df command"}}
