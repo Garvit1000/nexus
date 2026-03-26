@@ -262,36 +262,57 @@ class NexusApp:
         )
         return True
 
+    def _google_search_client(self):
+        """First configured Gemini client (supports Google Search grounding)."""
+        from ..ai.llm_client import GoogleGenAIClient
+
+        for c in [self.llm_client] + list(self.fallback_clients):
+            if isinstance(c, GoogleGenAIClient):
+                return c
+        return None
+
+    async def _grounded_web_search(self, query: str) -> tuple[Optional[str], Optional[str]]:
+        """
+        Run Gemini + Google Search grounding for ``query``.
+
+        Returns:
+            (answer_text, None) on success.
+            (None, user_facing_error) on failure (missing client or API error).
+        """
+        if not query.strip():
+            return None, "Empty search query."
+        if not self.llm_client:
+            return None, "No AI provider is configured."
+
+        search_client = self._google_search_client()
+        if not search_client:
+            return None, (
+                "Web search requires a Google (Gemini) provider. "
+                "Set GOOGLE_API_KEY to enable grounded answers."
+            )
+
+        try:
+            result = await asyncio.to_thread(search_client.search, query.strip())
+        except Exception as e:
+            return None, f"Search error: {e}"
+
+        if not (result and str(result).strip()):
+            return None, "Search returned no answer."
+        return str(result).strip(), None
+
     async def _cmd_search(self, args: str) -> bool:
         if not args:
             self.console.print(f"[{WARN}]Usage: /search [i]query[/i][/{WARN}]")
             return False
-        if not self.llm_client:
-            self.console.print(f"[{ERROR}]No AI provider is configured.[/{ERROR}]")
-            return False
-
-        from ..ai.llm_client import GoogleGenAIClient
-
-        search_client = None
-        candidates = [self.llm_client] + self.fallback_clients
-        for c in candidates:
-            if isinstance(c, GoogleGenAIClient):
-                search_client = c
-                break
-
-        if not search_client:
-            self.console.print(
-                f"[{WARN}]/search requires a Google (Gemini) provider. "
-                f"Set GOOGLE_API_KEY to enable web search.[/{WARN}]"
-            )
-            return False
 
         with self.console.status(f"[{ACCENT}]Searching…[/{ACCENT}]", spinner="dots"):
-            try:
-                result = await asyncio.to_thread(search_client.search, args)
-            except Exception as e:
-                self.console.print(f"[{ERROR}]Search error:[/{ERROR}] {e}")
-                return False
+            result, err = await self._grounded_web_search(args)
+
+        if err:
+            tag = WARN if "requires a Google" in err else ERROR
+            self.console.print(f"[{tag}]{err}[/{tag}]")
+            return False
+
         self.console.print(Panel(result, title="Search Result", border_style=SUCCESS))
         return True
 
@@ -829,6 +850,62 @@ class NexusApp:
             self.last_action_result = result.output
             self.last_action_type = "PLAN"
             return
+
+        # ── Fact lookup — grounded web search (same pipeline as /search) ─────────
+        if decision.action == "SEARCH":
+            with self.console.status(
+                f"[{ACCENT}]Searching the web…[/{ACCENT}]", spinner="dots"
+            ):
+                search_text, search_err = await self._grounded_web_search(text)
+
+            if search_text:
+                self.console.print(Rule(style="dim"))
+                self.console.print(
+                    Text.assemble(
+                        ("● ", f"bold {ACCENT}"),
+                        ("Nexus", f"bold {ACCENT}"),
+                        ("  ", ""),
+                        ("(web)", DIM),
+                    )
+                )
+                self.console.print()
+                self.console.print(Panel(search_text, border_style=SUCCESS))
+                self.console.print(Rule(style="dim"))
+
+                if hasattr(self.decision_engine, "store_response"):
+                    self.decision_engine.store_response(text, search_text)
+
+                safe_response = (
+                    search_text[:500] if len(search_text) > 500 else search_text
+                )
+                self.session_manager.add_turn(
+                    user_input=text,
+                    intent_action="SEARCH",
+                    intent_reasoning=decision.reasoning,
+                    result=safe_response,
+                    success=True,
+                )
+                self.last_action_result = search_text
+                self.last_action_type = "SEARCH"
+                if (
+                    hasattr(self.llm_client, "memory_client")
+                    and self.llm_client.memory_client
+                ):
+                    asyncio.create_task(
+                        asyncio.to_thread(
+                            self.llm_client.memory_client.add_memory,
+                            f"User: {text}\nNexus (web): {search_text}",
+                            {"type": "chat_history"},
+                        )
+                    )
+                return
+
+            # No grounded search — explain once, then answer without claiming live web
+            if search_err:
+                self.console.print(f"[{WARN}]{search_err}[/{WARN}]")
+                self.console.print(
+                    f"[{DIM}]Answering from the chat model only (no live web).[/{DIM}]\n"
+                )
 
         # ── Pure chat — stream with Rich Live for beautiful rendering ──────────
         if not self.llm_client:
