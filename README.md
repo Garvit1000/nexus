@@ -456,6 +456,32 @@ First-run setup explains that **Nexus Memory** is optional and uses **your** Sup
 
 ## Installation
 
+### Install from PyPI (recommended)
+
+The distribution on PyPI is **`nexus-linux-assistant`** (the name `nexus` is already used by another package). The CLI command is still **`nexus`**.
+
+```bash
+pip install "nexus-linux-assistant[all]"
+playwright install chromium   # needed for /browse
+nexus                           # first run: onboarding + BYOK keys → ~/.config/nexus/
+```
+
+Optional isolated install: `pipx install "nexus-linux-assistant[all]"` then ensure `playwright` browsers are installed in that environment or on your PATH as you prefer.
+
+### Install from a GitHub Release tarball
+
+Replace `VERSION` with the tag (for example `0.1.0` for tag `v0.1.0`). Artifact names use underscores (`nexus_linux_assistant`).
+
+```bash
+VERSION=0.1.0
+curl -LO "https://github.com/Garvit1000/nexus/releases/download/v${VERSION}/nexus_linux_assistant-${VERSION}.tar.gz"
+pip install "nexus_linux_assistant-${VERSION}.tar.gz[all]"
+playwright install chromium
+nexus
+```
+
+No `.env` is included in the package; use onboarding or `/settings key`, or create your own `.env` if you want env-based config.
+
 ### Prerequisites
 - Python 3.10 or higher
 - Supported OS: Ubuntu, Debian, Fedora, Arch Linux
@@ -820,6 +846,16 @@ Rollback checkpoints, dynamic slash command registry, **FILE_APPEND / FILE_PATCH
 
 **Long-term:**
 MCP integration, Git assistant, Docker management mode, natural language cron jobs, interactive desktop avatar.
+
+## Releasing (maintainers)
+
+1. Bump `version` in `pyproject.toml` if needed.
+2. Create and push an annotated tag: `git tag v0.1.0 && git push origin v0.1.0`.
+3. The [`.github/workflows/release.yml`](.github/workflows/release.yml) workflow builds sdist + wheel, uploads them to the GitHub Release, then publishes to PyPI via **trusted publishing (OIDC)**.
+
+**One-time PyPI setup:** On [pypi.org](https://pypi.org), create the project **`nexus-linux-assistant`**, then add a *trusted publisher* for this GitHub repo (`Garvit1000/nexus`) and workflow `release.yml` ([docs](https://docs.pypi.org/trusted-publishers/)). No `PYPI_TOKEN` secret is required when OIDC is configured.
+
+Build only from CI or a clean tree so `.env` is never included in artifacts.
 
 ## Contributing
 
