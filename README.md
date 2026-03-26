@@ -460,21 +460,40 @@ First-run setup explains that **Nexus Memory** is optional and uses **your** Sup
 
 The distribution on PyPI is **`nexus-linux-assistant`** (the name `nexus` is already used by another package). The CLI command is still **`nexus`**.
 
+**Ubuntu, Debian, Fedora, and many other distros** ship an “externally managed” system Python ([PEP 668](https://peps.python.org/pep-0668/)). Plain `pip install` into that Python fails on purpose. Use **pipx** or a **venv** below — not system pip.
+
+#### Option A — pipx (good default for a CLI on Linux)
+
 ```bash
-pip install "nexus-linux-assistant[all]"
-playwright install chromium   # needed for /browse
-nexus                           # first run: onboarding + BYOK keys → ~/.config/nexus/
+sudo apt update && sudo apt install -y pipx   # or: sudo dnf install pipx, etc.
+pipx ensurepath                                # restart the terminal after this
+pipx install "nexus-linux-assistant[all]"
+~/.local/pipx/venvs/nexus-linux-assistant/bin/python -m playwright install chromium
+nexus
 ```
 
-Optional isolated install: `pipx install "nexus-linux-assistant[all]"` then ensure `playwright` browsers are installed in that environment or on your PATH as you prefer.
+If your pipx venv path differs, run `pipx list -v` and use that venv’s `python -m playwright install chromium` so browsers match Nexus.
+
+#### Option B — virtual environment
+
+```bash
+python3 -m venv ~/venvs/nexus
+source ~/venvs/nexus/bin/activate
+pip install "nexus-linux-assistant[all]"
+playwright install chromium
+nexus
+```
+
+Avoid `--break-system-packages` unless you intentionally want to override distro policy.
 
 ### Install from a GitHub Release tarball
 
-Replace `VERSION` with the tag (for example `0.1.0` for tag `v0.1.0`). Artifact names use underscores (`nexus_linux_assistant`).
+Replace `VERSION` with the tag (for example `0.1.0` for tag `v0.1.0`). Artifact names use underscores (`nexus_linux_assistant`). Use **venv (or pipx) pip**, not system pip, for the same PEP 668 reason.
 
 ```bash
 VERSION=0.1.0
 curl -LO "https://github.com/Garvit1000/nexus/releases/download/v${VERSION}/nexus_linux_assistant-${VERSION}.tar.gz"
+python3 -m venv ~/venvs/nexus && source ~/venvs/nexus/bin/activate
 pip install "nexus_linux_assistant-${VERSION}.tar.gz[all]"
 playwright install chromium
 nexus
