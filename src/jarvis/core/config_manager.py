@@ -84,8 +84,36 @@ class ConfigManager:
         except OSError:
             pass
 
+    def _update_env_file(self, **kwargs):
+        try:
+            from dotenv import set_key
+
+            env_path = Path(".env").resolve()
+            if not env_path.exists():
+                return
+
+            mapping = {
+                "google_api_key": "GOOGLE_API_KEY",
+                "openrouter_api_key": "OPENROUTER_API_KEY",
+                "groq_api_key": "GROQ_API_KEY",
+                "groq_gpt_api_key": "GROQ_GPT_API_KEY",
+                "anthropic_api_key": "ANTHROPIC_API_KEY",
+                "supermemory_api_key": "SUPERMEMORY_API_KEY",
+                "browser_use_api_key": "BROWSER_USE_API_KEY",
+                "api_key": "JARVIS_API_KEY",
+                "model_provider": "JARVIS_MODEL_PROVIDER",
+            }
+
+            for key, value in kwargs.items():
+                env_key = mapping.get(key)
+                if env_key and value:
+                    set_key(str(env_path), env_key, value)
+        except Exception:
+            pass
+
     def update(self, **kwargs):
         for key, value in kwargs.items():
             if hasattr(self.config, key):
                 setattr(self.config, key, value)
         self.save_config()
+        self._update_env_file(**kwargs)
