@@ -1,6 +1,6 @@
 [project]
 name = "nexus-linux-assistant"
-version = "0.1.0"
+version = "0.1.1"
 description = "An intelligent, terminal-based AI Linux assistant."
 authors = [
     {name = "garvit", email = "garvitjoshi543@gmail.com"},
