@@ -235,12 +235,23 @@ class DecisionEngine:
                 reasoning="Direct request to search filesystem — will use FILE_SEARCH.",
             )
 
-        # 5. File Content Inspection
-        if text.startswith("read file") or text.startswith("cat "):
+        # 5. File Content Inspection / Summarization / Analysis
+        file_read_patterns = [
+            r"^(read|cat|show|display|open|view)\s+(file|the file|contents of|content of)\b",
+            r"^cat\s+",
+            r"\b(summarize|summarise|summary of|explain|analyze|analyse|describe)\s+(this\s+)?(file|document|config|log|script|code)\b",
+            r"\b(summarize|summarise|summary of|explain|analyze|analyse|describe)\s+.+\.(txt|py|js|ts|json|yaml|yml|toml|md|cfg|conf|ini|log|csv|xml|html|sh|bash|zsh)\b",
+            r"\b(what'?s?\s+in|what\s+does|contents?\s+of|tell\s+me\s+about)\s+.+\.(txt|py|js|ts|json|yaml|yml|toml|md|cfg|conf|ini|log|csv|xml|html|sh|bash|zsh)\b",
+            r"\b(read|show|get)\s+.+\.(txt|py|js|ts|json|yaml|yml|toml|md|cfg|conf|ini|log|csv|xml|html|sh|bash|zsh)\s*(and|then)?\s*(summarize|explain|analyze|tell me)?\b",
+            r"\b(what\s+is\s+in|what'?s?\s+inside)\s+\S+\.(txt|py|js|ts|json|yaml|yml|toml|md|cfg|conf|ini|log|csv|xml|html|sh|bash|zsh)\b",
+            r"^(read|show)\s+(me\s+)?(/|~/)",
+            r"\b(summarize|summarise|explain|analyze|analyse)\s+(/|~/)",
+        ]
+        if any(re.search(pat, text) for pat in file_read_patterns):
             return Intent(
                 action="PLAN",
                 confidence=1.0,
-                reasoning="Direct request to read local file content.",
+                reasoning="Direct request to read/analyze local file content.",
             )
 
         # 6. Direct Execute — simple single-command operations that skip the planner

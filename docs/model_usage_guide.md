@@ -18,7 +18,9 @@ This document provides a comprehensive breakdown of how different AI models are 
 ```
 ┌─────────────────────────────────────────┐
 │         Router / Decision Layer         │
-│  Groq: Kimi K2 (moonshotai/kimi-k2)    │
+│  Default: Groq Kimi K2 (fastest)       │
+│  Also: OpenRouter, Gemini, Anthropic,  │
+│        GroqGPT (via /settings model)   │
 │  Purpose: Ultra-fast intent routing     │
 └─────────────────────────────────────────┘
                     │
@@ -28,11 +30,12 @@ This document provides a comprehensive breakdown of how different AI models are 
 │   Chat Brain   │    │  Specialized    │
 │                │    │    Modules      │
 │ 1. OpenRouter  │    │                 │
-│ 2. Groq Kimi   │    │ • Browser:      │
-│ 3. Gemini      │    │   Gemini Flash  │
-│ 4. Mock        │    │                │    │   Gemini 2.5    │
-└────────────────┘    │ • Search:       │
-                      │   Gemini 2.5    │
+│ 2. Anthropic   │    │ • Browser:      │
+│ 3. GroqGPT     │    │   Gemini Flash  │
+│ 4. Groq Kimi   │    │ • Search:       │
+│ 5. Gemini      │    │   Gemini 2.5    │
+│ 6. Mock        │    │ • Condenser:    │
+└────────────────┘    │   Groq (fast)   │
                       └─────────────────┘
 ```
 
@@ -368,7 +371,8 @@ GOOGLE_API_KEY=<key>              # Browser, search
 1. **Use Groq for routing**: 10x faster than alternatives
 2. **Parallel requests**: Decision engine + memory lookup
 3. **Caching**: Memory system caches proven solutions
-4. **Streaming**: Not yet implemented (future enhancement)
+4. **Streaming**: Live token streaming for chat responses and plan building
+5. **Context Condenser**: Uses Groq-first ordering for fastest compression of large context
 
 ### Quality Optimization
 
@@ -415,24 +419,30 @@ Output:
 
 ---
 
+## Model Switching
+
+Users can switch models at runtime via the TUI:
+
+```
+/settings model              # Interactive picker for all tasks
+/settings model chat         # Switch chat model
+/settings model router       # Switch router model (now supports all providers)
+/settings model browser      # Switch browser model
+```
+
+Or directly:
+```
+/settings model chat openai/gpt-oss-120b:free
+/settings model router gemini-2.5-flash
+```
+
 ## Future Model Integrations
 
 ### Planned Additions
 
-1. **Claude 3.5 Sonnet**: Via OpenRouter for complex reasoning
-2. **Llama 3.3**: Local execution for privacy-sensitive tasks
-3. **Mixtral**: Via Groq for cost-effective long-context tasks
-4. **Custom Fine-Tuned Models**: For domain-specific commands
-
-### Model Switching
-
-Users can override models via environment variables:
-
-```bash
-# Future feature
-export NEXUS_ROUTER_MODEL="anthropic/claude-3.5-sonnet"
-export NEXUS_CHAT_MODEL="meta-llama/llama-3.3-70b"
-```
+1. **Llama 3.3**: Local execution for privacy-sensitive tasks
+2. **Mixtral**: Via Groq for cost-effective long-context tasks
+3. **Custom Fine-Tuned Models**: For domain-specific commands
 
 ---
 
