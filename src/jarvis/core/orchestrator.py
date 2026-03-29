@@ -21,7 +21,7 @@ from ..utils.syntax_output import print_command_output, print_error_output
 class TaskStep:
     id: int
     description: str
-    action: str  # BROWSER, TERMINAL, LLM, AZURE_RUN, FILE_WRITE, FILE_READ, FILE_SEARCH
+    action: str  # BROWSER, TERMINAL, LLM_PROCESS, AZURE_RUN, FILE_WRITE, FILE_READ, FILE_SEARCH
     command: str
     filename_pattern: Optional[str] = None  # For Smart Resume
     file_content: Optional[str] = None  # For FILE_WRITE
@@ -96,9 +96,17 @@ class Planner:
             except Exception:
                 pass
 
-        # Cap context_str to prevent token explosion from memory dumps
+        # Condense large context instead of blind truncation
         if context_str and len(context_str) > 1500:
-            context_str = context_str[:1500] + "..."
+            try:
+                from ..ai.context_condenser import ContextCondenser
+
+                condenser = ContextCondenser(self.llm_clients)
+                context_str = condenser.condense(
+                    context_str, max_chars=1200, label="planner context"
+                )
+            except Exception:
+                context_str = context_str[:1500] + "..."
 
         # The --- MEMORY CONTEXT --- marker tells enrich_prompt() to skip
         # its own memory query, preventing triple-injection.
@@ -122,6 +130,10 @@ ACTIONS:
   - Name/directory: command="sites" or command="advran/sites" or command=".bashrc"
   - Content grep: command="content:password_hash"
   - NEVER use TERMINAL with find/locate — always use FILE_SEARCH instead.
+- LLM_PROCESS: pass data to the AI for analysis/summarization/explanation. Use AFTER FILE_READ or TERMINAL steps.
+  - command="<instruction>" — what to do with the data (e.g., "Summarize this file", "Explain this code", "List the key points")
+  - Automatically receives the output from the previous step as context.
+  - Use this whenever the user wants to understand, summarize, analyze, or explain file contents or command output.
 - AZURE_RUN: run untrusted/heavy scripts in disposable cloud sandbox (user command is passed safely; still use a complete shell command string).
 - SERVICE_MGT: manage system services.
 
@@ -179,6 +191,15 @@ EXAMPLES:
 "find sites folder in advran" →
 [{{"action":"FILE_SEARCH","command":"advran/sites","description":"Search for sites directory inside advran"}}]
 
+"summarize the file /home/user/readme.md" →
+[{{"action":"FILE_READ","command":"/home/user/readme.md","description":"Read the readme file"}},{{"action":"LLM_PROCESS","command":"Summarize this document. Provide a concise overview of the key points.","description":"Summarize the file contents"}}]
+
+"explain what's in /etc/nginx/nginx.conf" →
+[{{"action":"FILE_READ","command":"/etc/nginx/nginx.conf","description":"Read the Nginx config file"}},{{"action":"LLM_PROCESS","command":"Explain this Nginx configuration file. Describe what each section does and any notable settings.","description":"Explain the config file"}}]
+
+"find my bashrc and tell me what aliases are defined" →
+[{{"action":"FILE_SEARCH","command":".bashrc","description":"Find the bashrc file"}},{{"action":"FILE_READ","command":"~/.bashrc","description":"Read the bashrc file"}},{{"action":"LLM_PROCESS","command":"List and explain all shell aliases defined in this bashrc file.","description":"Analyze aliases in bashrc"}}]
+
 "show me latest Delhi news" →
 [{{"action":"BROWSER","command":"Search latest Delhi news top 10 headlines","headless":true,"description":"Fetch Delhi news"}}]
 
@@ -192,7 +213,7 @@ EXAMPLES:
 [{{"action":"TERMINAL","command":"sudo mkdir -p /opt/myapp && sudo tar xf /home/user/Downloads/archive.tar.gz -C /opt/myapp","description":"Extract archive to target directory"}}]
 
 OUTPUT JSON ONLY:
-[{{"description":"...","action":"TERMINAL|BROWSER|CHECK|FILE_WRITE|FILE_READ|FILE_SEARCH|SERVICE_MGT|AZURE_RUN","command":"...","cwd":"optional working dir for TERMINAL","file_content":"only for FILE_WRITE","headless":"only for BROWSER","filename_pattern":"optional"}}]
+[{{"description":"...","action":"TERMINAL|BROWSER|CHECK|FILE_WRITE|FILE_READ|FILE_SEARCH|LLM_PROCESS|SERVICE_MGT|AZURE_RUN","command":"...","cwd":"optional working dir for TERMINAL","file_content":"only for FILE_WRITE","headless":"only for BROWSER","filename_pattern":"optional"}}]
 """
 
     def create_plan(self, request: str, context_str: str = "") -> List[TaskStep]:
@@ -1129,15 +1150,82 @@ If it cannot be fixed, return: UNFIXABLE
                                 with open(
                                     abs_path, "r", encoding="utf-8", errors="ignore"
                                 ) as f:
-                                    content = f.read(15000)
-                                    if f.read(1):
-                                        content += "\n... (File truncated)"
+                                    content = f.read(50000)
+                                    is_large = bool(f.read(1))
+                                if is_large or len(content) > 15000:
+                                    # Condense large files instead of blind truncation
+                                    from ..ai.context_condenser import ContextCondenser
+
+                                    def _on_condense(orig, cond, lbl):
+                                        self.console.print(
+                                            f"[dim cyan]⚡ Condensing {lbl}: {orig:,} → {cond:,} chars[/dim cyan]"
+                                        )
+
+                                    condenser = ContextCondenser(
+                                        [self.llm_client] + self.fallback_clients,
+                                        on_condense=_on_condense,
+                                    )
+                                    content = condenser.condense_file(
+                                        content, max_chars=12000
+                                    )
                                 step.output = content
                                 step.status = "success"
                                 context["last_output"] = content
                         except Exception as e:
                             step.output = f"FILE_READ Error: {str(e)}"
                             step.status = "failed"
+
+                    elif step.action == "LLM_PROCESS":
+                        instruction = step.command.strip()
+                        previous_data = context.get("last_output", "")
+                        if not previous_data:
+                            step.output = "No data from previous step to process."
+                            step.status = "failed"
+                        else:
+                            # Condense large inputs instead of blind truncation
+                            if len(previous_data) > 12000:
+                                from ..ai.context_condenser import ContextCondenser
+
+                                def _on_condense_llm(orig, cond, lbl):
+                                    self.console.print(
+                                        f"[dim cyan]⚡ Condensing {lbl}: {orig:,} → {cond:,} chars[/dim cyan]"
+                                    )
+
+                                condenser = ContextCondenser(
+                                    [self.llm_client] + self.fallback_clients,
+                                    on_condense=_on_condense_llm,
+                                )
+                                previous_data = condenser.condense(
+                                    previous_data, max_chars=10000, label="input data"
+                                )
+                            llm_prompt = (
+                                f"{instruction}\n\n"
+                                f"--- DATA ---\n{previous_data}\n--- END DATA ---"
+                            )
+                            try:
+                                clients_to_try = [
+                                    self.llm_client
+                                ] + self.fallback_clients
+                                llm_response = None
+                                for client in clients_to_try:
+                                    try:
+                                        llm_response = await asyncio.to_thread(
+                                            client.generate_response, llm_prompt
+                                        )
+                                        if llm_response and llm_response.strip():
+                                            break
+                                    except Exception:
+                                        continue
+                                if llm_response and llm_response.strip():
+                                    step.output = llm_response.strip()
+                                    step.status = "success"
+                                    context["last_output"] = step.output
+                                else:
+                                    step.output = "LLM processing returned no response."
+                                    step.status = "failed"
+                            except Exception as e:
+                                step.output = f"LLM_PROCESS Error: {str(e)}"
+                                step.status = "failed"
 
                     elif step.action == "FILE_SEARCH":
                         await self._execute_file_search(step, context)

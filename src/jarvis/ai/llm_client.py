@@ -33,7 +33,16 @@ class LLMClient(ABC):
 
             context = self.memory_client.query_memory(query_signal[:500])
             if context:
-                context = str(context)[:2000]
+                context = str(context)
+                # Condense large memory context instead of blind truncation
+                if len(context) > 2000:
+                    try:
+                        from .context_condenser import ContextCondenser
+
+                        condenser = ContextCondenser([self])
+                        context = condenser.condense(context, max_chars=1500)
+                    except Exception:
+                        context = context[:2000]
                 return (
                     f"--- MEMORY CONTEXT ---\n{context}\n--- END MEMORY ---\n\n{prompt}"
                 )

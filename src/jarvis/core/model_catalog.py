@@ -57,6 +57,32 @@ TASK_MODEL_OPTIONS: dict[str, dict[str, Any]] = {
                     "moonshotai/kimi-k2-instruct-0905",
                 ],
             },
+            "openrouter_api_key": {
+                "provider": "OpenRouterClient",
+                "items": [
+                    "openai/gpt-oss-120b:free",
+                    "moonshotai/kimi-k2-0905",
+                ],
+            },
+            "google_api_key": {
+                "provider": "GoogleGenAIClient",
+                "items": [
+                    "gemini-2.5-flash",
+                    "gemini-1.5-flash",
+                ],
+            },
+            "anthropic_api_key": {
+                "provider": "AnthropicClient",
+                "items": [
+                    "claude-sonnet-4-20250514",
+                ],
+            },
+            "groq_gpt_api_key": {
+                "provider": "GroqGPTClient",
+                "items": [
+                    "openai/gpt-oss-120b",
+                ],
+            },
         },
     },
     "browser": {

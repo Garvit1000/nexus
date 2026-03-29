@@ -33,21 +33,38 @@
 - Safer than piping through shell — content is written directly via Python `open()`, no injection possible.
 
 ### 4. LLM Rate Limiting & Budget Tracking
-**Current state:** No throttling — a user in rapid-fire mode can burn through API credits in minutes.
+**Current state:** No throttling — a user in rapid-fire mode can burn through API credits in minutes. No visibility into how many tokens or dollars a session has consumed.
 **What to build:**
 - Per-minute rate limiter in `LLMClient.generate_response()`.
 - Optional token budget tracker with configurable daily limits.
+- **Live cost estimates**: Show approximate token usage and dollar cost per request in the TUI (e.g. `[dim]~1.2k tokens · $0.003[/dim]`).
+- `/usage` command to show session and daily totals.
+
+### 5. LLM_PROCESS Hardening
+**Current state:** `LLM_PROCESS` is newly shipped and untested against edge cases in production (huge files, binary content, multi-step chains where context accumulates).
+**What to build:**
+- Graceful handling of binary/non-UTF-8 files detected mid-pipeline (currently errors).
+- Chain-aware context: when multiple `LLM_PROCESS` steps run in sequence, accumulate a rolling summary instead of only passing the last step's output.
+- Timeout protection: cap LLM processing time so a stuck API call doesn't block the plan indefinitely.
+- Integration tests with real file types (.py, .json, .log, .conf, binary).
+
+### 6. Distribution & Self-Update
+**Current state:** No auto-update mechanism. Config schema changes between versions can silently break settings. No way for the user to check if they're on the latest version.
+**What to build:**
+- `/version` command that checks PyPI for the latest `nexus-linux-assistant` release and shows upgrade instructions if behind.
+- Config migration: `ConfigManager` reads a `schema_version` field and runs upgrade hooks when the schema changes (e.g. new fields with defaults, renamed keys).
+- Optional update notification on startup (non-blocking, dismissible).
 
 ---
 
 ## 🟡 Medium Priority
 
-### 1. Context Window Management for Long Plans
-**Current state:** Plans with 6+ steps start hallucinating because accumulated step output fills the LLM context.
-**What to build:**
-- After each step, store only a summary (first 100 chars + RC) instead of full stdout.
-- Truncate the Planner's context window to the last 3 step outputs when generating fix prompts.
-- Cap raw output stored in `step.output` at 500 chars; full output redirected to `~/.nexus/logs/{plan_id}.log`.
+### 1. ~~Context Window Management for Long Plans~~ → **Shipped as Context Condenser**
+**Status: SHIPPED (March 2026)**
+- `ContextCondenser` in `src/jarvis/ai/context_condenser.py` uses a fast LLM (Groq preferred) to summarize large context instead of blind character truncation.
+- Integrated at 4 key points: `enrich_prompt` (memory), planner `_build_prompt` (context), `FILE_READ` (large files), `LLM_PROCESS` (input data).
+- Visual feedback: `⚡ Condensing file content: 48,230 → 11,847 chars`.
+- Falls back to truncation when no LLM client is available.
 
 ### 2. Parallel Execution for Independent Steps
 **Current state:** All plan steps are strictly sequential even when they have no dependencies.
@@ -60,6 +77,26 @@
 **Current state:** `~/.nexus/session.json` stores conversation history (which may include sensitive command outputs) but has no file permissions set.
 **What to build:**
 - `os.chmod(session_file, 0o600)` after every write in `PersistentSessionManager`.
+
+### 4. Model Discovery & Search
+**Current state:** `/settings model` only shows hardcoded models from `model_catalog.py`. Users can't browse what's available on OpenRouter/Groq or search for new models.
+**What to build:**
+- `/models search <query>` that queries the OpenRouter API (`/api/v1/models`) and Groq model list to find matching models.
+- Show context window size, pricing, and speed tier for each result.
+- Allow users to set any discovered model as their chat/router/browser model (with a warning if untested).
+
+### 5. Structured Observability & Metrics
+**Current state:** Audit log exists but is unstructured text. No metrics on LLM latency, token usage, plan success rates, or self-heal frequency.
+**What to build:**
+- `MetricsCollector` class that records per-request: provider, model, latency_ms, tokens_in, tokens_out, success/fail.
+- `/stats` command showing session summary: total requests, avg latency, tokens used, self-heal triggers, cache hit rate.
+- Optional export to JSON for external dashboards.
+
+### 6. Condensation Progress UX
+**Current state:** Context Condenser shows a one-line message after completion but no progress indicator while the LLM is compressing (can take 2-5s for large files).
+**What to build:**
+- Show a Rich spinner (`Condensing large context...`) during the condenser LLM call.
+- For FILE_READ of very large files, show a two-phase indicator: `Reading file...` → `Condensing 48K chars...` → result.
 
 ---
 
@@ -94,6 +131,12 @@
 ---
 
 ## ✅ Recently Shipped
+
+### LLM_PROCESS, Context Condenser & Router Expansion (March 2026)
+- **LLM_PROCESS action**: New orchestrator action type that passes data from a previous step (FILE_READ, TERMINAL output) to the LLM for analysis, summarization, or explanation. Enables natural requests like "summarize this config file", "explain what's in main.py", "find my bashrc and tell me what aliases are defined".
+- **Context Condenser** (`src/jarvis/ai/context_condenser.py`): Smart LLM-based compression replaces blind character truncation at 4 key points (memory enrichment, planner context, FILE_READ, LLM_PROCESS input). Uses Groq-first ordering for speed. Visual feedback shows compression ratio. Falls back to truncation when no client available.
+- **Expanded router model catalog**: Router/Decision Engine now supports models from all 5 providers (Groq, OpenRouter, Google, Anthropic, GroqGPT) instead of only Groq. Users can select any provider they have keys for via `/settings model router`.
+- **Enhanced file analysis heuristics**: Decision engine now catches 9+ additional regex patterns for file read/analysis requests ("summarize this file", "what's in X.json", "explain this config", "read me ~/path") and routes them directly to PLAN at confidence 1.0 instead of falling through to the slow LLM router.
 
 ### Azure `AZURE_RUN` command transport
 - **All** user commands are passed with **base64 → `bash`**, not `eval` + `shlex.quote` inside a single-quoted `bash -c '…'` (which broke quoting and could truncate any command to the first token). Preflight refuses obviously incomplete lines (empty, bare `git`/`curl`/`wget`/`bash`/`sh -c`/etc.). Planner rule **#8** requires complete one-liners for sketchy/sandbox-eligible steps.
