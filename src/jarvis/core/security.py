@@ -71,6 +71,20 @@ class CommandValidator:
             "ftp with heredoc hangs in non-interactive mode; "
             "use interactive lftp instead",
         ),
+        # lftp -e with 'user' login command — credentials embedded in command string,
+        # visible in ps aux, shell history, and logs
+        (
+            r"(?i)lftp\s+.*?-e\s+['\"].*\buser\s+\S+\s+\S+",
+            "lftp -e 'user name password' embeds credentials in the command string "
+            "(visible in ps aux, shell history, logs); use interactive lftp instead",
+        ),
+        # lftp -e with destructive FTP operations — must be isolated and confirmed
+        (
+            r"(?i)lftp\s+.*?-e\s+['\"].*\b(mdelete|mrm|rm\s|rmdir|glob\s+rm)\b",
+            "lftp -e contains destructive FTP operation (mdelete/mrm/rm); "
+            "destructive actions must not be combined with connection — "
+            "use interactive lftp and confirm deletions separately",
+        ),
     ]
     _FTP_DANGEROUS_PATTERNS = [
         # user:password@host inside ftp:// (and quoted variants)
@@ -271,6 +285,36 @@ class CommandValidator:
 
 
 validator = CommandValidator()
+
+
+# ── Credential Scrubbing ─────────────────────────────────────────────────────
+# Patterns that match credentials in user input / commands.
+# Used to redact before logging, session storage, and memory/RAG.
+_CREDENTIAL_PATTERNS = [
+    # ftp://user:pass@host → ftp://***:***@host
+    (re.compile(r"(ftp://)[^\s/'\"]+:[^\s/'\"@]+@"), r"\1***:***@"),
+    # lftp -u user,pass → lftp -u ***,***
+    (re.compile(r"(lftp\s+.*?-u\s+)\S+,\S+", re.IGNORECASE), r"\1***,***"),
+    # 'user <name> <password>' inside lftp -e strings → 'user *** ***'
+    (re.compile(r"(\buser\s+)\S+\s+\S+", re.IGNORECASE), r"\1*** ***"),
+    # --ftp-password=X → --ftp-password=***
+    (re.compile(r"(--ftp-password=)\S+", re.IGNORECASE), r"\1***"),
+    # Generic user:pass@host patterns (ssh, etc.)
+    (re.compile(r"(://)[^\s/'\"]+:[^\s/'\"@]+@"), r"\1***:***@"),
+]
+
+
+def scrub_credentials(text: str) -> str:
+    """Redact credentials from a string for safe logging/storage.
+
+    Handles ftp://user:pass@host, lftp -u user,pass, --ftp-password=X,
+    and generic protocol://user:pass@host patterns.
+    Returns a copy with credentials replaced by '***'.
+    """
+    result = text
+    for pattern, replacement in _CREDENTIAL_PATTERNS:
+        result = pattern.sub(replacement, result)
+    return result
 
 
 class SafetyCheck:

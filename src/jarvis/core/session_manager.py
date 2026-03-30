@@ -8,6 +8,7 @@ the agent to maintain context and reference previous actions.
 import time
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass, asdict
+from .security import scrub_credentials
 
 
 @dataclass
@@ -69,10 +70,10 @@ class SessionManager:
             success: Whether the action succeeded
         """
         turn = SessionTurn(
-            user_input=user_input,
+            user_input=scrub_credentials(user_input),
             intent_action=intent_action,
-            intent_reasoning=intent_reasoning,
-            result=result,
+            intent_reasoning=scrub_credentials(intent_reasoning),
+            result=scrub_credentials(result) if result else result,
             success=success,
         )
 

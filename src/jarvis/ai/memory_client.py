@@ -1,5 +1,6 @@
 import logging
 from typing import Optional
+from ..core.security import scrub_credentials
 
 
 class SupermemoryClient:
@@ -16,11 +17,15 @@ class SupermemoryClient:
     def add_memory(self, content: str, metadata: Optional[dict] = None) -> bool:
         """
         Adds a new memory to Supermemory using the official SDK.
+        Credentials are scrubbed before storage.
         """
         try:
-            # SDK usage: client.add(content=..., metadata=...)
-            self.client.add(content=content, metadata=metadata or {})
-            # The SDK likely returns a dict or object. We assume success if no exception.
+            safe_content = scrub_credentials(content)
+            safe_metadata = {}
+            if metadata:
+                for k, v in metadata.items():
+                    safe_metadata[k] = scrub_credentials(v) if isinstance(v, str) else v
+            self.client.add(content=safe_content, metadata=safe_metadata)
             return True
         except Exception as e:
             logging.error(f"Failed to add memory: {e}")
@@ -83,7 +88,9 @@ class SupermemoryClient:
         from dataclasses import asdict, is_dataclass
 
         try:
-            content = f"Task Execution Log:\nQuery: {query}\nOutcome: {status}\nOutput: {output[:500]}..."
+            safe_query = scrub_credentials(query)
+            safe_output = scrub_credentials(output[:500])
+            content = f"Task Execution Log:\nQuery: {safe_query}\nOutcome: {status}\nOutput: {safe_output}..."
 
             # Convert plan to dict - handle both dataclass and dict objects
             plan_data = []
@@ -99,8 +106,8 @@ class SupermemoryClient:
             metadata = {
                 "type": "task_log",
                 "status": status,
-                "plan": json.dumps(plan_data),
-                "query": query,
+                "plan": scrub_credentials(json.dumps(plan_data)),
+                "query": safe_query,
             }
             return self.add_memory(content, metadata)
         except Exception as e:

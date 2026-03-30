@@ -10,6 +10,7 @@ import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from .security import scrub_credentials
 
 
 class AuditLogger:
@@ -78,7 +79,8 @@ class AuditLogger:
         stdout_excerpt = stdout[:200].replace("\n", " ").strip()
         stderr_excerpt = stderr[:200].replace("\n", " ").strip()
 
-        entry = f"[{ts}] STATUS={status} CONFIRMED={confirmed_str} | CMD={command!r}"
+        safe_cmd = scrub_credentials(command)
+        entry = f"[{ts}] STATUS={status} CONFIRMED={confirmed_str} | CMD={safe_cmd!r}"
         if stdout_excerpt:
             entry += f" | OUT={stdout_excerpt!r}"
         if stderr_excerpt:
@@ -89,4 +91,5 @@ class AuditLogger:
     def log_skipped(self, command: str, reason: str) -> None:
         """Log that a command was skipped (dry run / user rejected)."""
         ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-        self.logger.info(f"[{ts}] STATUS=SKIPPED REASON={reason!r} | CMD={command!r}")
+        safe_cmd = scrub_credentials(command)
+        self.logger.info(f"[{ts}] STATUS=SKIPPED REASON={reason!r} | CMD={safe_cmd!r}")

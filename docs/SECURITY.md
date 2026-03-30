@@ -89,12 +89,85 @@ User input: "open ftp://admin:1234@192.168.1.1"
     │
     ├─ Security Validator: no credentials in command → PASS (LOW risk)
     │
+    ├─ Credential Scrubbing: input scrubbed before session/audit/memory storage
+    │   └─ "ftp://admin:1234@host" → "ftp://***:***@host" in all logs
+    │
     ├─ Orchestrator: detects lftp/ftp → forces run_interactive
+    │   ├─ Shows: "⚠️ Credentials detected in input. For security, they
+    │   │   won't be used automatically. Enter them interactively."
     │   └─ User gets a live TTY session
     │
     └─ User enters credentials at lftp prompt
         └─ Credentials never in shell history, ps aux, or logs
 ```
+
+#### Credential Intent Awareness
+
+When the user provides credentials in the URL (e.g. `ftp://admin:1234@host`), Nexus:
+
+1. **Detects** the credentials in the original request
+2. **Strips** them from the generated command
+3. **Notifies** the user explicitly:
+   ```
+   ⚠️  Credentials detected in input.
+   For security, they won't be used automatically.
+   Enter them interactively at the lftp prompt.
+   ```
+4. Opens an **interactive session** where the user types credentials at the lftp prompt
+
+This prevents confusion ("why didn't it use my password?") and builds trust by being transparent about the security decision.
+
+#### FTP Retry Guard
+
+FTP connection failures are handled differently from other TERMINAL failures:
+
+| Property | FTP Commands | Other TERMINAL |
+|---|---|---|
+| Max heal attempts | 2 | 3 |
+| Failure classification | Yes (network / auth / timeout / unknown) | No |
+| User feedback | Shows classified failure type | Generic error output |
+
+Failure classification helps users diagnose issues quickly:
+- **network**: "Connection refused", "No route to host"
+- **auth**: "Login incorrect", "Authentication failed"
+- **timeout**: "Connection timed out"
+
+#### Intent Downgrade Protection
+
+The planner can introduce destructive actions that were **not** in the user's original request. This is a privilege escalation risk:
+
+```
+User says: "open ftp connection"
+Planner generates: lftp -e "rm -rf *" host   ← NOT what user asked for
+```
+
+Nexus guards against this by scanning planned commands for destructive patterns (`rm -rf`, `mkfs`, `dd if=`, `DROP TABLE`, `git push --force`, `mdelete`, `mrm`, `glob rm`) and comparing against the original request. If destructive actions are introduced that weren't in the intent:
+
+1. Shows an **Intent Escalation Detected** warning
+2. Lists each escalated step with its destructive action
+3. Requires explicit user confirmation (default: deny)
+
+#### Credential Scrubbing (Logging Policy)
+
+Credentials are scrubbed from **all** persistence layers before storage. The `scrub_credentials()` function in `security.py` redacts:
+
+| Pattern | Before | After |
+|---|---|---|
+| `ftp://user:pass@host` | `ftp://admin:1234@192.168.1.1` | `ftp://***:***@192.168.1.1` |
+| `lftp -u user,pass` | `lftp -u admin,secret 10.0.0.1` | `lftp -u ***,*** 10.0.0.1` |
+| `user <name> <password>` | `lftp -e 'user admin 1234; ls'` | `lftp -e 'user *** ***; ls'` |
+| `--ftp-password=X` | `--ftp-password=hunter2` | `--ftp-password=***` |
+| `protocol://user:pass@` | `ssh://root:pass@10.0.0.1` | `ssh://***:***@10.0.0.1` |
+
+Applied at these persistence points:
+
+| Storage | File | What's scrubbed |
+|---|---|---|
+| **Session history** (`~/.nexus/session.json`) | `session_manager.py` | `user_input`, `intent_reasoning`, `result` |
+| **Audit log** (`~/.nexus/audit.log`) | `audit_logger.py` | `command` in both `log()` and `log_skipped()` |
+| **Memory/RAG** (Supermemory API) | `memory_client.py` | `content` and all `metadata` string values |
+
+Credentials are scrubbed at the storage boundary, not at input time — so the planner and decision engine can still use the original input for routing decisions within a single session.
 
 #### What Gets Blocked and Why
 
@@ -102,10 +175,14 @@ User input: "open ftp://admin:1234@192.168.1.1"
 |---|---|---|---|
 | `lftp 192.168.1.1` | LOW | Auto-execute | No credentials exposed |
 | `lftp -p 2121 host` | LOW | Auto-execute | No credentials exposed |
+| `lftp -e 'ls; quit' host` | LOW | Auto-execute | No credentials or destructive ops |
 | `lftp -u admin,1234 host` | HIGH | Blocked (auto) | Password in `ps aux` + history |
 | `ftp://admin:1234@host` | HIGH | Blocked (auto) | Password embedded in URL |
 | `--ftp-password=hunter2` | HIGH | Blocked (auto) | Password in flag |
 | `curl -u anonymous ftp://host` | HIGH | Blocked (auto) | Anonymous FTP legacy risk |
+| `lftp -e 'user admin 1234'` | CRITICAL | Always blocked | Credentials in `-e` command string |
+| `lftp -e 'mdelete *; quit'` | CRITICAL | Always blocked | Destructive op must not be scripted |
+| `lftp -e 'mrm dir/; quit'` | CRITICAL | Always blocked | Recursive delete via `-e` |
 | `echo "1234" \| ftp host` | CRITICAL | Always blocked | Hangs + leaks credentials |
 | `ftp host <<EOF` | CRITICAL | Always blocked | Hangs in subprocess capture |
 
@@ -113,19 +190,24 @@ User input: "open ftp://admin:1234@192.168.1.1"
 
 The tactical planner is instructed to:
 
-1. **Never** embed credentials in FTP commands
-2. **Always** use `lftp` (not basic `ftp`) — `lftp` is scriptable and handles interactive sessions properly
+1. **Never** embed credentials in FTP commands — not via `-u`, not via `-e 'user X Y'`, not in any form
+2. **Always** use `lftp` (not basic `ftp`) — `lftp` handles interactive sessions properly
 3. **Strip** credentials from `ftp://` URLs — generate `lftp host` only
 4. **Never** use heredoc (`<<EOF`) or pipe (`echo | ftp`) patterns with FTP
+5. **Never** script destructive ops via `-e` flag — `mdelete`, `mrm`, `rm`, `glob rm` must be done interactively
+6. **Always** generate only `lftp host` — bare interactive session, nothing else
 
 #### Implementation Files
 
 | File | Responsibility |
 |---|---|
-| `src/jarvis/core/security.py` | `_FTP_BLOCKED_PATTERNS` (CRITICAL), `_FTP_DANGEROUS_PATTERNS` (HIGH) |
-| `src/jarvis/core/orchestrator.py` | Planner prompt (credential-free FTP), TERMINAL handler (forces interactive for lftp/ftp) |
+| `src/jarvis/core/security.py` | `_FTP_BLOCKED_PATTERNS` (CRITICAL), `_FTP_DANGEROUS_PATTERNS` (HIGH), `scrub_credentials()` |
+| `src/jarvis/core/orchestrator.py` | Planner prompt (credential-free FTP), TERMINAL handler (forces interactive + credential intent notice), retry guard (max 2 + failure classification), intent downgrade protection |
 | `src/jarvis/ai/decision_engine.py` | Heuristic: detects `ftp://` URLs → routes to planner |
-| `tests/test_security.py` | `TestFtpSecurity` — covers all three risk tiers |
+| `src/jarvis/core/session_manager.py` | Scrubs credentials before persisting to `session.json` |
+| `src/jarvis/core/audit_logger.py` | Scrubs credentials before writing to `audit.log` |
+| `src/jarvis/ai/memory_client.py` | Scrubs credentials before sending to Supermemory API |
+| `tests/test_security.py` | `TestFtpSecurity`, `TestCredentialScrubbing` |
 
 ## Known Limitations
 
