@@ -143,9 +143,37 @@ class TestFtpSecurity:
         )
         assert not r.is_valid
 
-    def test_lftp_user_comma_password_fails_strict(self):
+    def test_lftp_user_comma_password_blocked_strict(self):
+        """lftp -u user,pass is HIGH RISK — credentials on CLI, blocked in auto-execution."""
         v = CommandValidator()
-        r = v.validate("lftp -u myuser,p4ss -e 'ls' ftp://ftp.example.com", strict=True)
+        r = v.validate("lftp -u myuser,p4ss -e 'ls' ftp.example.com", strict=True)
+        assert not r.is_valid
+        blob = " ".join(r.warnings) + r.reasoning
+        assert "lftp" in blob.lower()
+
+    def test_lftp_no_credentials_allowed(self):
+        """lftp host (no credentials) is LOW risk — safe to auto-execute."""
+        v = CommandValidator()
+        r = v.validate("lftp 192.168.1.1", strict=True)
+        assert r.is_valid
+        assert r.warnings == []
+
+    def test_lftp_with_port_no_credentials_allowed(self):
+        """lftp -p port host (no credentials) is LOW risk."""
+        v = CommandValidator()
+        r = v.validate("lftp -p 2121 192.168.1.1", strict=True)
+        assert r.is_valid
+
+    def test_echo_pipe_ftp_blocked(self):
+        """echo 'pass' | ftp is CRITICAL — always blocked, hangs and leaks credentials."""
+        v = CommandValidator()
+        r = v.validate('echo "1234" | ftp -n 192.168.1.1', strict=True)
+        assert not r.is_valid
+
+    def test_ftp_heredoc_blocked(self):
+        """ftp with heredoc is CRITICAL — always blocked, hangs in subprocess capture."""
+        v = CommandValidator()
+        r = v.validate("ftp -n 192.168.1.1 <<EOF\nuser admin\nbinary\nquit\nEOF", strict=True)
         assert not r.is_valid
 
     def test_curl_anonymous_ftp_fails_strict(self):

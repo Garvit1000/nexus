@@ -567,6 +567,12 @@ class NexusApp:
         new_client.model = model_name
         self._set_task_target(task_name, new_client)
 
+        # Persist model choice to config so it survives across sessions
+        config_field = f"{task_name}_model"
+        from ..core.config_manager import ConfigManager as _CM
+
+        _CM().update(**{config_field: model_name})
+
         new_provider = type(new_client).__name__
         switch_info = f"  [cyan]({new_provider})[/cyan]" if provider_switched else ""
         self.console.print(

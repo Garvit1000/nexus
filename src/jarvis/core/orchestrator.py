@@ -160,6 +160,14 @@ SYSTEM OPERATIONS REFERENCE (use these exact procedures):
 - .tar.gz/.tar.xz/.tar.bz2: tar xf archive.tar.gz -C /target/dir (use absolute paths)
 - .zip: unzip file.zip -d /target/dir
 - Snap: sudo snap install package OR sudo snap install --dangerous file.snap
+- FTP connections: ALWAYS use lftp (interactive, scriptable). NEVER use the basic 'ftp' command with heredoc or pipes — it hangs in non-interactive mode.
+  - SECURITY: NEVER embed credentials (user/password) in the command string. Credentials in CLI args are visible in ps aux, shell history, and logs.
+  - Open interactive session: lftp host (user types credentials inside lftp prompt)
+  - With port: lftp -p port host
+  - Parse ftp:// URLs: ftp://user:pass@host → lftp host (DROP the credentials from the command — user enters them interactively)
+  - For anonymous FTP: lftp host
+  - Install lftp first if not available: sudo apt-get install -y lftp && lftp host
+  - NEVER use: lftp -u user,pass, --ftp-password=, echo "pass" | ftp, ftp <<EOF
 - Flatpak: flatpak install file.flatpakref
 - Desktop entries: ~/.local/share/applications/name.desktop (user) or /usr/share/applications/ (system)
   Format: [Desktop Entry]\nName=AppName\nExec=/path/to/binary\nIcon=/path/to/icon\nType=Application\nCategories=Utility;
@@ -205,6 +213,9 @@ EXAMPLES:
 
 "setup AppImage at /home/user/Downloads/Recordly-linux-x64.AppImage" →
 [{{"action":"TERMINAL","command":"chmod +x /home/user/Downloads/Recordly-linux-x64.AppImage && mkdir -p ~/.local/bin && cp /home/user/Downloads/Recordly-linux-x64.AppImage ~/.local/bin/Recordly.AppImage","description":"Make executable and copy to user bin"}},{{"action":"TERMINAL","command":"EXTRACT_DIR=$(mktemp -d /tmp/nexus-appimg.XXXXXX) && cd \"$EXTRACT_DIR\" && /home/user/Downloads/Recordly-linux-x64.AppImage --appimage-extract 2>/dev/null && mkdir -p ~/.local/share/icons && find squashfs-root -maxdepth 2 \\( -name '*.png' -o -name '*.svg' \\) -exec cp {{}} ~/.local/share/icons/recordly.png \\; ; rm -rf \"$EXTRACT_DIR\"","description":"Extract icon from AppImage in isolated temp dir"}},{{"action":"FILE_WRITE","command":"~/.local/share/applications/recordly.desktop","file_content":"[Desktop Entry]\\nName=Recordly\\nExec=$HOME/.local/bin/Recordly.AppImage --no-sandbox\\nIcon=$HOME/.local/share/icons/recordly.png\\nType=Application\\nCategories=Utility;\\nComment=Recordly screen recorder","description":"Create desktop entry with correct paths"}},{{"action":"TERMINAL","command":"update-desktop-database ~/.local/share/applications/ 2>/dev/null; true","description":"Update desktop database"}}]
+
+"open ftp://admin:1234@192.168.1.1" →
+[{{"action":"CHECK","command":"which lftp || exit 1","description":"Check if lftp is available"}},{{"action":"TERMINAL","command":"sudo apt-get install -y lftp && lftp 192.168.1.1","description":"Open interactive FTP session (user enters credentials at lftp prompt)"}}]
 
 "install /home/user/Downloads/package.deb" →
 [{{"action":"TERMINAL","command":"sudo dpkg -i /home/user/Downloads/package.deb && sudo apt-get install -f -y","description":"Install deb package and fix dependencies"}}]
@@ -1027,14 +1038,26 @@ If it cannot be fixed, return: UNFIXABLE
                                 step.command = _search_target
                                 _rerouted = True
 
+                        # Detect FTP/lftp — must run interactively so user
+                        # can enter credentials at the prompt (never embed in CLI).
+                        _is_ftp_cmd = bool(
+                            re.search(r"(?:^|&&\s*|;\s*)\s*(?:sudo\s+)?lftp\b", _cmd_lower)
+                            or re.search(r"(?:^|&&\s*|;\s*)\s*(?:sudo\s+)?ftp\s", _cmd_lower)
+                        )
+
                         if _rerouted:
                             await self._execute_file_search(step, context)
                         elif (
-                            "sudo" in step.command
-                            or SafetyCheck.is_sudo_required(step.command)
-                        ) and "--appimage-extract" not in step.command:
-                            # Interactive path has no timeout — never use it for AppImage extract
-                            # (can hang forever; use run() + sudo -S + long timeout instead).
+                            _is_ftp_cmd
+                            or (
+                                ("sudo" in step.command
+                                 or SafetyCheck.is_sudo_required(step.command))
+                                and "--appimage-extract" not in step.command
+                            )
+                        ):
+                            # Interactive path: FTP connections (user enters credentials),
+                            # sudo commands (password prompt). No timeout — never use for
+                            # AppImage extract (can hang forever).
                             live.stop()
                             try:
                                 return_code = await asyncio.to_thread(

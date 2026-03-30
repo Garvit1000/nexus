@@ -48,25 +48,49 @@ class CommandValidator:
     # "rm -rf /\n/tmp/foo" (newline between / and tmp looks like "then whitespace after /").
     # Only allow: end, ;, &&, ||, or spaces/tabs then those (horizontal whitespace only).
     _RM_RF_ROOT_LOOKAHEAD = r"(?=$|;|&&|\|\||[ \t]+(?:$|;|&&|\|\|))"
-    # FTP: credentials in URLs and flags end up in shell history, process list, and logs;
-    # anonymous FTP is a legacy risk. (Cleartext on the wire is implied — prefer HTTPS/SFTP.)
-    _FTP_PATTERNS = [
+    # FTP Security — risk-based execution model.
+    # Cleartext on the wire is implied — prefer HTTPS/SFTP where possible.
+    #
+    # Risk tiers:
+    #   CRITICAL (BLOCKED)  — always rejected, broken by design
+    #     echo "pass" | ftp, heredoc ftp — hangs in subprocess, leaks credentials
+    #   HIGH (DANGEROUS)    — blocked in auto-execution, requires user confirmation
+    #     ftp://user:pass@host, --ftp-password=X, lftp -u user,pass — credential exposure
+    #   LOW                 — safe, auto-execute
+    #     lftp host, ftp host (no credentials in command)
+    _FTP_BLOCKED_PATTERNS = [
+        # Piping password to ftp via echo — visible in process list, hangs in subprocess
+        (
+            r"(?i)echo\s+.*\|\s*ftp\b",
+            "Piping password to ftp via echo (insecure and hangs in non-interactive mode); "
+            "use interactive lftp instead",
+        ),
+        # Heredoc with basic ftp — hangs in subprocess capture mode
+        (
+            r"(?i)\bftp\b[^\n]*<<",
+            "ftp with heredoc hangs in non-interactive mode; "
+            "use interactive lftp instead",
+        ),
+    ]
+    _FTP_DANGEROUS_PATTERNS = [
         # user:password@host inside ftp:// (and quoted variants)
         (
             r"(?i)ftp://[^\s/'\"]+:[^\s/'\"@]+@",
-            "FTP URL embeds a password (visible in shell history and process list); use SFTP, "
-            "FTPS, or credentials outside the command line",
+            "FTP URL embeds a password (visible in shell history and process list); "
+            "use interactive lftp without inline credentials",
         ),
         (
             r"(?i)--ftp-password=[^\s]+",
-            "FTP password on the command line (--ftp-password); use a netrc file or SFTP/SSH",
+            "FTP password on the command line (--ftp-password); use a .netrc file or SFTP/SSH",
         ),
+        # lftp -u user,pass — credentials visible in ps aux, shell history, and logs
         (
             r"(?i)lftp\s+.*?-u\s+[^,\s]+,\S+",
-            "lftp -u user,password exposes the password on the command line",
+            "lftp -u user,password exposes credentials on the command line "
+            "(visible in ps aux, shell history, logs); use interactive lftp or ~/.netrc",
         ),
         (
-            r"(?i)(curl|wget|lftp|ftp|ftpget)\s+[^\n;]*?("
+            r"(?i)(curl|wget|ftp|ftpget)\s+[^\n;]*?("
             r"-u\s+anonymous\b|--ftp-user[= ]anonymous\b|"
             r"ftp://anonymous@|ftp://anonymous:)",
             "Anonymous FTP login (legacy risk; prefer authenticated HTTPS or SFTP)",
@@ -85,7 +109,7 @@ class CommandValidator:
         (r"wget.*\|\s*bash", "Piping download directly to bash"),
         (r"curl.*\|\s*sh", "Piping download directly to shell"),
         (r"eval\s+\$\(", "Eval with command substitution"),
-    ] + _FTP_PATTERNS
+    ] + _FTP_DANGEROUS_PATTERNS
 
     # Patterns that are always blocked
     BLOCKED_PATTERNS = [
@@ -95,7 +119,7 @@ class CommandValidator:
         ),
         (r"rm\s+-[a-zA-Z]*r[a-zA-Z]*\s+/\*", "Attempting to delete root wildcard"),
         (r":\(\)\s*\{.*:\s*\|\s*:.*\}\s*;?\s*:", "Fork bomb detected"),
-    ]
+    ] + _FTP_BLOCKED_PATTERNS
 
     def __init__(self):
         self.strict_mode = False
