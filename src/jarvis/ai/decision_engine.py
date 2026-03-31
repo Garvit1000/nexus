@@ -254,6 +254,17 @@ class DecisionEngine:
                 reasoning="Direct request to read/analyze local file content.",
             )
 
+        # 5b. FTP URL — route to planner so it uses lftp (not the broken basic ftp)
+        ftp_match = re.search(
+            r"(?i)\bftp://(?:([^:@\s]+):([^@\s]+)@)?([^\s/:]+)(?::(\d+))?(/\S*)?", text
+        )
+        if ftp_match:
+            return Intent(
+                action="PLAN",
+                confidence=1.0,
+                reasoning="FTP URL detected — route to planner for proper lftp-based connection.",
+            )
+
         # 6. Direct Execute — simple single-command operations that skip the planner
         direct_execute_patterns = [
             # Filesystem operations with clear targets
