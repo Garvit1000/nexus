@@ -861,10 +861,10 @@ If it cannot be fixed, return: UNFIXABLE
                     )
                 from ..utils.io import confirm_action as _confirm
 
-                if not _confirm(
-                    "Allow these destructive actions?", default=False
-                ):
-                    self.console.print("[dim]Plan cancelled (intent escalation blocked).[/dim]")
+                if not _confirm("Allow these destructive actions?", default=False):
+                    self.console.print(
+                        "[dim]Plan cancelled (intent escalation blocked).[/dim]"
+                    )
                     return OrchestratorResult(
                         success=False,
                         output="Plan cancelled: destructive actions not in original intent",
@@ -891,8 +891,14 @@ If it cannot be fixed, return: UNFIXABLE
             transient=False,
             vertical_overflow="ellipsis",
         ) as live:
-            _original_req = steps_or_request if isinstance(steps_or_request, str) else context_str
-            context: Dict[str, Any] = {"files": [], "last_output": "", "original_request": _original_req}
+            _original_req = (
+                steps_or_request if isinstance(steps_or_request, str) else context_str
+            )
+            context: Dict[str, Any] = {
+                "files": [],
+                "last_output": "",
+                "original_request": _original_req,
+            }
             success_count = 0
             plan_status = "success"
             final_output = ""
@@ -1021,9 +1027,7 @@ If it cannot be fixed, return: UNFIXABLE
                                     elif _has_install:
                                         # Pure install, no real work — skip entirely
                                         next_step.status = "success"
-                                        next_step.output = (
-                                            "Skipped: Dependency verified in previous step."
-                                        )
+                                        next_step.output = "Skipped: Dependency verified in previous step."
                                         next_step.description += " (Skipped)"
 
                             # Determine if this was the ONLY step in the plan (e.g. just checking a file)
@@ -1121,19 +1125,22 @@ If it cannot be fixed, return: UNFIXABLE
                         # Detect FTP/lftp — must run interactively so user
                         # can enter credentials at the prompt (never embed in CLI).
                         _is_ftp_cmd = bool(
-                            re.search(r"(?:^|&&\s*|;\s*)\s*(?:sudo\s+)?lftp\b", _cmd_lower)
-                            or re.search(r"(?:^|&&\s*|;\s*)\s*(?:sudo\s+)?ftp\s", _cmd_lower)
+                            re.search(
+                                r"(?:^|&&\s*|;\s*)\s*(?:sudo\s+)?lftp\b", _cmd_lower
+                            )
+                            or re.search(
+                                r"(?:^|&&\s*|;\s*)\s*(?:sudo\s+)?ftp\s", _cmd_lower
+                            )
                         )
 
                         if _rerouted:
                             await self._execute_file_search(step, context)
-                        elif (
-                            _is_ftp_cmd
-                            or (
-                                ("sudo" in step.command
-                                 or SafetyCheck.is_sudo_required(step.command))
-                                and "--appimage-extract" not in step.command
+                        elif _is_ftp_cmd or (
+                            (
+                                "sudo" in step.command
+                                or SafetyCheck.is_sudo_required(step.command)
                             )
+                            and "--appimage-extract" not in step.command
                         ):
                             # Interactive path: FTP connections (user enters credentials),
                             # sudo commands (password prompt). No timeout — never use for
@@ -1181,7 +1188,9 @@ If it cannot be fixed, return: UNFIXABLE
                                         step.command,
                                     )
                                     _manual_cmd = (
-                                        _lftp_match.group(1) if _lftp_match else step.command
+                                        _lftp_match.group(1)
+                                        if _lftp_match
+                                        else step.command
                                     )
                                     if return_code != 0:
                                         self.console.print(
@@ -1605,7 +1614,10 @@ If it cannot be fixed, return: UNFIXABLE
                         _fail_out = (step.output or "").lower()
                         if "connection refused" in _fail_out or "no route" in _fail_out:
                             _fail_class = "network"
-                        elif "login incorrect" in _fail_out or "authentication" in _fail_out:
+                        elif (
+                            "login incorrect" in _fail_out
+                            or "authentication" in _fail_out
+                        ):
                             _fail_class = "auth"
                         elif "timed out" in _fail_out or "timeout" in _fail_out:
                             _fail_class = "timeout"

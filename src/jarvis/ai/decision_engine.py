@@ -255,7 +255,9 @@ class DecisionEngine:
             )
 
         # 5b. FTP URL — route to planner so it uses lftp (not the broken basic ftp)
-        ftp_match = re.search(r"(?i)\bftp://(?:([^:@\s]+):([^@\s]+)@)?([^\s/:]+)(?::(\d+))?(/\S*)?", text)
+        ftp_match = re.search(
+            r"(?i)\bftp://(?:([^:@\s]+):([^@\s]+)@)?([^\s/:]+)(?::(\d+))?(/\S*)?", text
+        )
         if ftp_match:
             return Intent(
                 action="PLAN",

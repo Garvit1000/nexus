@@ -173,24 +173,22 @@ class TestFtpSecurity:
     def test_ftp_heredoc_blocked(self):
         """ftp with heredoc is CRITICAL — always blocked, hangs in subprocess capture."""
         v = CommandValidator()
-        r = v.validate("ftp -n 192.168.1.1 <<EOF\nuser admin\nbinary\nquit\nEOF", strict=True)
+        r = v.validate(
+            "ftp -n 192.168.1.1 <<EOF\nuser admin\nbinary\nquit\nEOF", strict=True
+        )
         assert not r.is_valid
 
     def test_lftp_e_with_user_credentials_blocked(self):
         """lftp -e 'user admin 1234' is CRITICAL — credentials in command string."""
         v = CommandValidator()
-        r = v.validate(
-            "lftp 192.168.1.1 -e 'user admin 1234; ls; quit'", strict=True
-        )
+        r = v.validate("lftp 192.168.1.1 -e 'user admin 1234; ls; quit'", strict=True)
         assert not r.is_valid
         assert "credential" in r.reasoning.lower() or "user" in r.reasoning.lower()
 
     def test_lftp_e_with_mdelete_blocked(self):
         """lftp -e 'mdelete *' is CRITICAL — destructive op must not be scripted."""
         v = CommandValidator()
-        r = v.validate(
-            "lftp 192.168.1.1 -e 'mdelete *; quit'", strict=True
-        )
+        r = v.validate("lftp 192.168.1.1 -e 'mdelete *; quit'", strict=True)
         assert not r.is_valid
 
     def test_lftp_e_with_safe_commands_allowed(self):
